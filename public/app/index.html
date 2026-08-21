@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nexus.ai — AI Assistant for Office Documents &amp; Data</title>
+    <meta
+      name="description"
+      content="Nexus.ai helps office teams summarize files, draft Word documents, build Excel sheets and query the office database from one AI chat workspace."
+    />
+    <meta property="og:title" content="Nexus.ai — AI Assistant for Office Documents & Data" />
+    <meta
+      property="og:description"
+      content="Summarize files, draft Word documents, build Excel sheets and query the office database from one AI chat workspace."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-top">
+          <div class="brand">
+            <div class="brand-mark"></div>
+            <span class="brand-name">Nexus.ai</span>
+          </div>
+
+          <button class="btn-primary" id="new-conversation">New Document</button>
+
+          <nav>
+            <h3 class="rail-label">Recent Context</h3>
+            <ul class="conv-list" id="conversation-list"></ul>
+
+            <h3 class="rail-label">Connected Systems</h3>
+            <div class="systems">
+              <div class="system"><span class="dot"></span>Oracle DB Server</div>
+              <div class="system"><span class="dot"></span>SharePoint / Word</div>
+              <div class="system idle"><span class="dot amber"></span>Legacy SQL (Idle)</div>
+            </div>
+          </nav>
+        </div>
+
+        <div class="sidebar-foot">
+          <div class="avatar">JD</div>
+          <div>
+            <p class="user-name">Julian D.</p>
+            <p class="user-role">Senior Analyst</p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main -->
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar-left">
+            <span class="crumb">Project</span>
+            <span class="project-title" id="project-title">Q3 Revenue Analysis</span>
+          </div>
+          <div class="topbar-actions">
+            <button class="btn-ghost" data-export="xlsx">Export to Excel</button>
+            <button class="btn-ghost" data-export="docx">Draft Word Doc</button>
+          </div>
+        </header>
+
+        <div class="workspace">
+          <!-- Chat stream -->
+          <section class="chat">
+            <div class="stream" id="stream"></div>
+
+            <div class="composer">
+              <div class="attachments" id="attachments"></div>
+              <div class="composer-shell">
+                <textarea
+                  id="composer-input"
+                  placeholder="Ask Nexus to write, calculate, or query..."
+                ></textarea>
+                <button class="send" id="send" aria-label="Send message">→</button>
+              </div>
+              <div class="composer-tools">
+                <button class="tool" data-attach="Database record · inventory_master">
+                  Attach Database Record
+                </button>
+                <button class="tool" data-attach="Q3_Regional_Costs.xlsx">
+                  Reference Excel File
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Word live preview -->
+          <section class="preview">
+            <div class="preview-inner">
+              <div class="preview-head">
+                <span class="preview-kicker">Word Live Preview</span>
+                <span class="preview-saved" id="autosave">Autosaved 2m ago</span>
+              </div>
+
+              <h1>Q3 Expenditure Narrative</h1>
+              <p class="preview-lede">
+                An analytical overview of the fiscal variances observed within the Northern Regional
+                Operations for the third quarter of the 2023 fiscal year.
+              </p>
+
+              <div class="preview-body">
+                <p>
+                  Our recent query of the <u>Oracle SQL Environment</u> reveals a significant
+                  divergence in operational costs. Specifically, the Northern sector experienced a
+                  surge in utility and labor expenses that were not accounted for in the initial
+                  budgetary projections.
+                </p>
+
+                <figure class="figure">
+                  <img
+                    src="./assets/variance-chart.jpg"
+                    width="1200"
+                    height="600"
+                    loading="lazy"
+                    alt="Bar chart comparing projected and actual Q3 expenditure by category"
+                  />
+                  <figcaption>Figure 1.1: Expenditure Variance Graph</figcaption>
+                </figure>
+
+                <p>
+                  Moving forward, the recommendation is to integrate these findings into the master
+                  Excel sheet for consolidated reporting. The AI has flagged three areas where
+                  cost-saving measures could be applied based on historical trends saved in the
+                  conversation logs.
+                </p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
