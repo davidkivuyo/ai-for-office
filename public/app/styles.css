@@ -270,21 +270,26 @@ button {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* ---------- Chat stream ---------- */
 .chat {
   flex: 1;
+  width: 100%;
   max-width: 672px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   min-width: 0;
+  min-height: 0;
 }
 
 .stream {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 32px;
   display: flex;
   flex-direction: column;
@@ -496,6 +501,7 @@ button {
 
 /* ---------- Composer ---------- */
 .composer {
+  flex-shrink: 0;
   padding: 24px;
   border-top: 1px solid var(--border);
   background: var(--canvas);
@@ -591,112 +597,6 @@ button {
   height: 6px;
   border-radius: 50%;
   background: rgb(26 26 27 / 0.2);
-}
-
-/* ---------- Preview pane ---------- */
-.preview {
-  flex: 1;
-  background: var(--white);
-  padding: 48px;
-  overflow-y: auto;
-  min-width: 0;
-}
-
-.preview-inner {
-  max-width: 672px;
-  margin: 0 auto;
-}
-
-.preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 48px;
-}
-
-.preview-kicker {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.3em;
-  font-weight: 700;
-  color: rgb(26 26 27 / 0.2);
-}
-
-.preview-saved {
-  font-size: 10px;
-  color: rgb(26 26 27 / 0.4);
-}
-
-.preview h1 {
-  font-family: var(--font-serif);
-  font-size: 36px;
-  font-weight: 400;
-  margin: 0 0 24px;
-  color: rgb(26 26 27 / 0.9);
-}
-
-.preview-lede {
-  font-family: var(--font-serif);
-  font-size: 18px;
-  font-style: italic;
-  line-height: 1.7;
-  color: rgb(26 26 27 / 0.7);
-  margin: 0 0 32px;
-}
-
-.preview-body {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  font-size: 14px;
-  line-height: 1.8;
-  color: rgb(26 26 27 / 0.8);
-}
-
-.preview-body p {
-  margin: 0;
-}
-
-.preview-body u {
-  text-decoration-color: rgb(45 51 107 / 0.2);
-}
-
-.figure {
-  margin: 32px 0;
-}
-
-.figure img {
-  width: 100%;
-  aspect-ratio: 2 / 1;
-  object-fit: cover;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--canvas);
-  display: block;
-}
-
-.figure figcaption {
-  margin-top: 8px;
-  font-size: 10px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  color: rgb(26 26 27 / 0.3);
-}
-
-@media (max-width: 1180px) {
-  .workspace {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-  .chat {
-    max-width: none;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-  .preview {
-    padding: 32px;
-  }
 }
 
 @media (max-width: 820px) {
