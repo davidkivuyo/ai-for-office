@@ -1,6 +1,8 @@
 # Welcome to your Lovable project
 
-This project was built with [Lovable](https://lovable.dev).
+This project was designed with [Lovable](https://lovable.dev).
+
+Built by [Opencode](https://opencode.ai).
 
 ## Build with Lovable
 
