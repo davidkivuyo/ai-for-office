@@ -1,229 +1,444 @@
 /**
- * Nexus.ai — frontend only.
- * Every backend touchpoint is isolated in the `api` object below so a Python
- * backend (Flask/FastAPI/Django) can be wired in later without touching the UI.
+ * Nexus.ai — frontend wired to FastAPI backend per AGENTS Phase 1.
+ * All backend touchpoints go through `api` helpers; UI never talks to Ollama directly.
  */
 
+const API_BASE = ""; // same origin; FastAPI serves /api/*
+
+/* ---------------- Token & helpers ---------------- */
+const TOKEN_KEY = "nexus_token";
+
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+function setToken(t) {
+  if (t) localStorage.setItem(TOKEN_KEY, t);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+function authHeaders() {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+async function apiFetch(path, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...authHeaders(), ...(opts.headers || {}) };
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  if (!res.ok) {
+    const body = await res.text();
+    let msg = body;
+    try {
+      const j = JSON.parse(body);
+      msg = j.detail || j.message || body;
+    } catch (_) {}
+    const err = new Error(msg || `${res.status} ${res.statusText}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return res.json();
+  return res;
+}
+
+/* ---------------- API objects ---------------- */
 const api = {
-  // POST /api/chat  -> { reply, table?, files? }
-  async sendMessage(_conversationId, _text, _attachments) {
-    throw new Error("Backend not connected yet");
+  async login(username, password) {
+    const data = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    return data;
   },
-  // GET /api/conversations
+  async register(username, password, display_name) {
+    const data = await apiFetch("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ username, password, display_name: display_name || username }),
+    });
+    return data;
+  },
+  async me() {
+    return apiFetch("/api/auth/me");
+  },
   async listConversations() {
-    throw new Error("Backend not connected yet");
+    return apiFetch("/api/conversations");
   },
-  // GET /api/database/tables
-  async listDatabaseTables() {
-    throw new Error("Backend not connected yet");
+  async createConversation(title) {
+    return apiFetch("/api/conversations", { method: "POST", body: JSON.stringify({ title }) });
+  },
+  async getConversation(id) {
+    return apiFetch(`/api/conversations/${id}`);
+  },
+  async sendMessage(conversationId, text, nodeId) {
+    const body = { message: text, stream: false };
+    if (conversationId) body.conversation_id = conversationId;
+    if (nodeId) body.node_id = nodeId;
+    return apiFetch("/api/chat", { method: "POST", body: JSON.stringify(body) });
+  },
+  async sendMessageStream(conversationId, text, nodeId, onToken) {
+    const body = { message: text, stream: true };
+    if (conversationId) body.conversation_id = conversationId;
+    if (nodeId) body.node_id = nodeId;
+    const res = await fetch(`${API_BASE}/api/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ ...body, stream: true }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(t);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalMeta = null;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") return finalMeta;
+          try {
+            const obj = JSON.parse(data);
+            if (obj.token) onToken(obj.token);
+            if (obj.done) finalMeta = obj;
+            if (obj.error) throw new Error(obj.error);
+          } catch (e) {
+            if (e instanceof SyntaxError) continue;
+            throw e;
+          }
+        }
+      }
+    } finally {
+      await reader.cancel();
+    }
+    return finalMeta;
+  },
+  async nodesHealth() {
+    return apiFetch("/api/nodes/health");
   },
 };
 
-/* ---------------- Demo state (replaced by API data later) ---------------- */
+/* ---------------- State ---------------- */
+let conversations = [];
+let activeConversation = null;
+let messagesCache = []; // current conv messages
+let healthPoll = null;
 
-const conversations = [
-  { id: "c1", title: "Q3 Revenue Analysis" },
-  { id: "c2", title: "Employee Feedback Loop" },
-  { id: "c3", title: "Supply Chain Audit" },
-];
-
-const seedMessages = [
-  {
-    role: "assistant",
-    text: "I've successfully accessed the <strong>Corporate_Finance_2023</strong> database. Based on the query, I see a 14% deviation in regional expenditure for the North sector. Should I generate a summary table for the executive report or draft the Excel reconciliation file?",
-    suggestions: ["Generate Table", "Reconcile Excel"],
-  },
-  {
-    role: "user",
-    text: "Summarize the North sector deviations and format them as a table compatible with Word. Also, save this query to my profile for future reference.",
-  },
-  {
-    role: "assistant",
-    text: "Drafting the summary table now...",
-    table: {
-      head: ["Category", "Projected", "Actual", "Variance"],
-      rows: [
-        ["Operations", "$450,000", "$512,000", { value: "+13.7%", tone: "neg" }],
-        ["Logistics", "$210,000", "$198,000", { value: "-5.7%", tone: "pos" }],
-      ],
-    },
-    files: [
-      { badge: "XLSX", name: "North_Sector_Variance.xlsx", meta: "Generated just now · 24.5 KB" },
-    ],
-  },
-];
-
-let activeConversation = conversations[0].id;
-let attachments = [];
-
-/* ---------------- DOM helpers ---------------- */
-
-const $ = (sel) => document.querySelector(sel);
+const $ = (s) => document.querySelector(s);
 const stream = $("#stream");
 const listEl = $("#conversation-list");
 const inputEl = $("#composer-input");
-const attachEl = $("#attachments");
+const latencyHint = $("#latency-hint");
 
 function el(tag, className, html) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (html !== undefined) node.innerHTML = html;
-  return node;
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  if (html !== undefined) n.innerHTML = html;
+  return n;
+}
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
 /* ---------------- Rendering ---------------- */
-
 function renderConversations() {
   listEl.innerHTML = "";
   conversations.forEach((conv) => {
-    const li = el("li", conv.id === activeConversation ? "active" : "", conv.title);
-    li.addEventListener("click", () => {
+    const li = el("li", conv.id === activeConversation ? "active" : "", escapeHtml(conv.title));
+    li.addEventListener("click", async () => {
       activeConversation = conv.id;
       $("#project-title").textContent = conv.title;
       renderConversations();
+      await loadMessages(conv.id);
     });
     listEl.appendChild(li);
   });
 }
 
-function renderTable(table) {
-  const wrap = el("div", "data-table");
-  const t = el("table");
-  const thead = el("thead");
-  const hr = el("tr");
-  table.head.forEach((h) => hr.appendChild(el("th", "", h)));
-  thead.appendChild(hr);
-  const tbody = el("tbody");
-  table.rows.forEach((row) => {
-    const tr = el("tr");
-    row.forEach((cell) => {
-      const isObj = typeof cell === "object";
-      tr.appendChild(el("td", isObj ? cell.tone : "", isObj ? cell.value : cell));
-    });
-    tbody.appendChild(tr);
-  });
-  t.append(thead, tbody);
-  wrap.appendChild(t);
-  return wrap;
-}
-
-function renderFile(file) {
-  const card = el("div", "file-card");
-  card.append(
-    el("div", "file-badge", file.badge),
-    el("div", "", `<p class="file-name">${file.name}</p><p class="file-meta">${file.meta}</p>`),
-    el("button", "file-action", "Download"),
-  );
-  return card;
-}
-
-function renderMessage(msg) {
+function renderMessage(msg, meta, isTyping) {
   const wrapper = el("div", `msg ${msg.role}`);
-
   if (msg.role === "assistant") {
     wrapper.appendChild(el("div", "msg-mark"));
     const body = el("div", "msg-body");
-    body.appendChild(el("p", "", msg.text));
-
-    if (msg.suggestions) {
-      const row = el("div", "suggestions");
-      msg.suggestions.forEach((s) => {
-        const chip = el("button", "chip", s);
-        chip.addEventListener("click", () => submit(s));
-        row.appendChild(chip);
-      });
-      body.appendChild(row);
+    const p = el("p");
+    const content = msg.content || msg.text || "";
+    if (isTyping) {
+      p.innerHTML = content;
+    } else {
+      p.textContent = content;
     }
-    if (msg.table) body.appendChild(renderTable(msg.table));
-    if (msg.files) msg.files.forEach((f) => body.appendChild(renderFile(f)));
+    body.appendChild(p);
+    if (meta) {
+      const m = el("div", "msg-meta");
+      m.textContent = `${meta.actual_model || meta.model || ""} · ${meta.node_id || meta.actual_node || ""} · ${meta.latency_ms ? meta.latency_ms + "ms" : ""}`;
+      body.appendChild(m);
+    }
     wrapper.appendChild(body);
   } else {
     const bubble = el("div", "bubble");
-    bubble.appendChild(el("p", "", msg.text));
+    const p = el("p");
+    p.textContent = msg.content || msg.text || "";
+    bubble.appendChild(p);
     wrapper.appendChild(bubble);
   }
-
   stream.appendChild(wrapper);
   stream.scrollTop = stream.scrollHeight;
   return wrapper;
 }
 
-function renderAttachments() {
-  attachEl.innerHTML = "";
-  attachments.forEach((name, i) => {
-    const pill = el("div", "attachment", `<span>${name}</span>`);
-    const x = el("button", "", "✕");
-    x.addEventListener("click", () => {
-      attachments.splice(i, 1);
-      renderAttachments();
-    });
-    pill.appendChild(x);
-    attachEl.appendChild(pill);
-  });
+function clearStream() {
+  stream.innerHTML = "";
 }
 
-/* ---------------- Interactions ---------------- */
-
-function escapeHtml(str) {
-  return str.replace(
-    /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
-  );
+function showTyping() {
+  return renderMessage({ role: "assistant", content: '<span class="typing"><span></span><span></span><span></span></span>' }, null, true);
 }
 
-async function submit(rawText) {
-  const text = (rawText ?? inputEl.value).trim();
-  if (!text) return;
+/* ---------------- Auth UI ---------------- */
+const authOverlay = $("#auth-overlay");
+const authForm = $("#auth-form");
+const regForm = $("#register-form");
 
-  renderMessage({ role: "user", text: escapeHtml(text) });
-  inputEl.value = "";
-  const sent = attachments.slice();
-  attachments = [];
-  renderAttachments();
-
-  const pending = renderMessage({
-    role: "assistant",
-    text: '<span class="typing"><span></span><span></span><span></span></span>',
-  });
-
+function showAuth(msg) {
+  authOverlay.hidden = false;
+  const errEl = $("#auth-error");
+  if (msg) {
+    errEl.textContent = msg;
+    errEl.hidden = false;
+  } else {
+    errEl.textContent = "";
+    errEl.hidden = true;
+  }
+}
+function hideAuth() {
+  authOverlay.hidden = true;
+}
+async function checkAuth() {
+  const tok = getToken();
+  if (!tok) {
+    showAuth();
+    return false;
+  }
   try {
-    const res = await api.sendMessage(activeConversation, text, sent);
-    pending.remove();
-    renderMessage({ role: "assistant", ...res });
-  } catch (_err) {
-    pending.querySelector("p").innerHTML =
-      "The assistant service isn't connected yet. Once the Python backend is wired to <strong>/api/chat</strong>, replies, generated Word and Excel files, and saved conversations will stream in here.";
+    const user = await api.me();
+    onAuthed(user);
+    return true;
+  } catch (e) {
+    if (e.status === 401) {
+      setToken(null);
+      showAuth("Session expired — please sign in");
+      return false;
+    }
+    // Backend not reachable — still show app but with error hint
+    console.warn("me failed", e);
+    return false;
+  }
+}
+function onAuthed(user) {
+  hideAuth();
+  $("#user-name").textContent = user.display_name || user.username;
+  $("#avatar").textContent = (user.display_name || user.username || "?").slice(0, 2).toUpperCase();
+  // after auth, load data
+  refreshConversations();
+  refreshNodes();
+  startHealthPoll();
+}
+
+authForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#auth-error").hidden = true;
+  const u = $("#auth-username").value.trim();
+  const p = $("#auth-password").value;
+  try {
+    const data = await api.login(u, p);
+    setToken(data.access_token);
+    onAuthed(data.user);
+  } catch (err) {
+    const el = $("#auth-error");
+    el.textContent = err.message || "Login failed";
+    el.hidden = false;
+  }
+});
+regForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#reg-error").hidden = true;
+  const u = $("#reg-username").value.trim();
+  const p = $("#reg-password").value;
+  const d = $("#reg-display").value.trim();
+  try {
+    const data = await api.register(u, p, d);
+    setToken(data.access_token);
+    onAuthed(data.user);
+  } catch (err) {
+    const el = $("#reg-error");
+    el.textContent = err.message || "Register failed";
+    el.hidden = false;
+  }
+});
+$("#logout")?.addEventListener("click", () => {
+  setToken(null);
+  conversations = [];
+  activeConversation = null;
+  clearStream();
+  renderConversations();
+  showAuth();
+  stopHealthPoll();
+});
+
+/* ---------------- Data loading ---------------- */
+async function refreshConversations() {
+  try {
+    const list = await api.listConversations();
+    conversations = list;
+    if (!activeConversation && conversations.length) {
+      activeConversation = conversations[0].id;
+      $("#project-title").textContent = conversations[0].title;
+      await loadMessages(activeConversation);
+    }
+    renderConversations();
+  } catch (e) {
+    console.warn("listConversations failed", e);
+    latencyHint.textContent = "Offline — backend not reachable";
+  }
+}
+async function loadMessages(convId) {
+  clearStream();
+  try {
+    const data = await api.getConversation(convId);
+    messagesCache = data.messages || [];
+    messagesCache.forEach((m) => renderMessage(m, { model: m.model, node_id: m.node_id, latency_ms: m.latency_ms }));
+  } catch (e) {
+    renderMessage({ role: "assistant", content: `Could not load messages: ${e.message ?? ""}` });
   }
 }
 
-function init() {
-  renderConversations();
-  seedMessages.forEach(renderMessage);
-  renderAttachments();
+async function refreshNodes() {
+  try {
+    const data = await api.nodesHealth();
+    const nodes = data.nodes || [];
+    // Update sidebar dots
+    nodes.forEach((n) => {
+      const dot = document.getElementById(`dot-${n.node_id}`);
+      const label = document.getElementById(`label-${n.node_id}`);
+      if (!dot || !label) return;
+      dot.style.background = n.status === "healthy" ? "#22a35c" : n.status === "degraded" ? "#d9a021" : n.status === "disabled" ? "#9ca3af" : "#b02718";
+      label.textContent = n.model ? `${n.node_id} — ${n.model} · ${n.status}` : `${n.node_id} — ${n.status}`;
+    });
+    // Update select labels if we have model info
+    const sel = $("#node-select");
+    if (sel && nodes.length) {
+      Array.from(sel.options).forEach((opt) => {
+        if (!opt.value) return;
+        const n = nodes.find((x) => x.node_id === opt.value);
+        if (n) opt.textContent = n.model ? `${n.node_id} — ${n.model} (${n.status})` : `${n.node_id} (${n.status})`;
+      });
+    }
+  } catch (e) {
+    console.warn("nodesHealth failed", e);
+  }
+}
+function startHealthPoll() {
+  if (healthPoll) return;
+  healthPoll = setInterval(refreshNodes, 30000);
+}
+function stopHealthPoll() {
+  if (healthPoll) {
+    clearInterval(healthPoll);
+    healthPoll = null;
+  }
+}
+$("#node-health-btn")?.addEventListener("click", refreshNodes);
 
-  $("#send").addEventListener("click", () => submit());
-  inputEl.addEventListener("keydown", (e) => {
+/* ---------------- Compose ---------------- */
+async function submit(rawText) {
+  const text = (rawText ?? inputEl.value).trim();
+  if (!text) return;
+  const nodeId = $("#node-select")?.value || null;
+  const useStream = $("#stream-toggle")?.checked;
+  renderMessage({ role: "user", content: text });
+  inputEl.value = "";
+  const pending = showTyping();
+
+  try {
+    if (useStream) {
+      // Streaming: replace pending with live token accumulation
+      const bodyEl = pending.querySelector(".msg-body p");
+      bodyEl.textContent = "";
+      let full = "";
+      const meta = await api.sendMessageStream(activeConversation, text, nodeId, (tok) => {
+        full += tok;
+        bodyEl.textContent = full;
+        stream.scrollTop = stream.scrollHeight;
+      });
+      pending.remove();
+      const replyMeta = meta || {};
+      renderMessage({ role: "assistant", content: full || "(empty response)" }, replyMeta);
+      if (replyMeta.conversation_id && !activeConversation) {
+        activeConversation = replyMeta.conversation_id;
+      }
+      if (replyMeta.latency_ms) latencyHint.textContent = `${replyMeta.actual_model || ""} · ${replyMeta.latency_ms}ms`;
+      // Refresh list if this was a new conversation
+      await refreshConversations();
+      if (activeConversation) {
+        // Ensure we stay on this conv; reload messages to sync
+        // Avoid duplicate render if we already did — just keep as is
+      }
+    } else {
+      const res = await api.sendMessage(activeConversation, text, nodeId);
+      pending.remove();
+      if (!activeConversation) {
+        activeConversation = res.conversation_id;
+        $("#project-title").textContent = conversations.find((c) => c.id === activeConversation)?.title || res.conversation_id;
+      }
+      renderMessage({ role: "assistant", content: res.reply }, res);
+      latencyHint.textContent = `${res.actual_model} · ${res.latency_ms}ms`;
+      await refreshConversations();
+    }
+  } catch (err) {
+    pending.remove();
+    const isNetwork = err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError");
+    const detail = isNetwork ? "Backend not reachable. Is the FastAPI server running on :8000?" : (err.message || "Unknown error");
+    renderMessage({ role: "assistant", content: `Error: ${detail}` });
+  }
+}
+
+function initCompose() {
+  $("#send")?.addEventListener("click", () => submit());
+  inputEl?.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
     }
   });
-
-  document.querySelectorAll("[data-attach]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      attachments.push(btn.dataset.attach);
-      renderAttachments();
-    });
-  });
-
-  $("#new-conversation").addEventListener("click", () => {
-    const conv = { id: `c${Date.now()}`, title: "Untitled Document" };
-    conversations.unshift(conv);
-    activeConversation = conv.id;
-    $("#project-title").textContent = conv.title;
-    stream.innerHTML = "";
-    renderConversations();
+  $("#new-conversation")?.addEventListener("click", async () => {
+    try {
+      const conv = await api.createConversation("Untitled");
+      conversations.unshift(conv);
+      activeConversation = conv.id;
+      $("#project-title").textContent = conv.title;
+      clearStream();
+      renderConversations();
+    } catch (e) {
+      // Fallback: local draft only. Let the backend create the conversation
+      // on the first message so the id stays server-owned.
+      activeConversation = null;
+      $("#project-title").textContent = "Untitled Document (unsaved)";
+      clearStream();
+      renderConversations();
+    }
   });
 }
 
+/* ---------------- Init ---------------- */
+async function init() {
+  initCompose();
+  const ok = await checkAuth();
+  if (!ok) {
+    renderConversations();
+  }
+}
 init();

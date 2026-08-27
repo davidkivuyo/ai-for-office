@@ -599,6 +599,94 @@ button {
   background: rgb(26 26 27 / 0.2);
 }
 
+/* ---------- Auth overlay ---------- */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(249 248 246 / 0.92);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.auth-overlay[hidden] {
+  display: none !important;
+}
+.auth-card {
+  width: 360px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  box-shadow: 0 8px 24px rgb(26 26 27 / 0.08);
+}
+.auth-card h2 {
+  margin: 0 0 4px;
+  font-family: var(--font-serif);
+  font-size: 20px;
+}
+.auth-hint {
+  font-size: 12px;
+  color: rgb(26 26 27 / 0.5);
+  margin: 0 0 16px;
+}
+.auth-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+.auth-card input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--canvas);
+}
+.auth-card input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.auth-error {
+  font-size: 12px;
+  color: var(--neg);
+  margin: 8px 0 0;
+}
+.auth-divider {
+  text-align: center;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: rgb(26 26 27 / 0.3);
+  margin: 16px 0;
+  position: relative;
+}
+
+/* Node select */
+.node-select-label {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.node-select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--white);
+  font-size: 12px;
+}
+
+/* Latency / node meta badge */
+.msg-meta {
+  font-size: 10px;
+  color: rgb(26 26 27 / 0.4);
+  margin-top: 4px;
+}
+
 @media (max-width: 820px) {
   .sidebar {
     display: none;

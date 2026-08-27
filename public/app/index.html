@@ -25,6 +25,31 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <div class="auth-overlay" id="auth-overlay" hidden>
+      <div class="auth-card">
+        <div class="brand" style="margin-bottom: 16px">
+          <div class="brand-mark"></div>
+          <span class="brand-name">Nexus.ai</span>
+        </div>
+        <h2>Sign in</h2>
+        <form id="auth-form">
+          <label>Username <input id="auth-username" autocomplete="username" required /></label>
+          <label>Password <input id="auth-password" type="password" autocomplete="current-password" required /></label>
+          <button type="submit" class="btn-primary" id="auth-submit">Continue</button>
+          <p class="auth-error" id="auth-error" hidden></p>
+        </form>
+        <div class="auth-divider">or</div>
+        <form id="register-form">
+          <h3 style="font-size: 13px; margin: 0 0 8px">Create account</h3>
+          <label>Username <input id="reg-username" required /></label>
+          <label>Password <input id="reg-password" type="password" required /></label>
+          <label>Display name <input id="reg-display" placeholder="Optional" /></label>
+          <button type="submit" class="btn-ghost" style="width: 100%">Register</button>
+          <p class="auth-error" id="reg-error" hidden></p>
+        </form>
+      </div>
+    </div>
+
     <div class="app">
       <!-- Sidebar -->
       <aside class="sidebar">
@@ -40,21 +65,22 @@
             <h3 class="rail-label">Recent Context</h3>
             <ul class="conv-list" id="conversation-list"></ul>
 
-            <h3 class="rail-label">Connected Systems</h3>
-            <div class="systems">
-              <div class="system"><span class="dot"></span>Oracle DB Server</div>
-              <div class="system"><span class="dot"></span>SharePoint / Word</div>
-              <div class="system idle"><span class="dot amber"></span>Legacy SQL (Idle)</div>
+            <h3 class="rail-label">Inference Nodes</h3>
+            <div class="systems" id="node-status">
+              <div class="system" data-node="node1"><span class="dot" id="dot-node1"></span><span id="label-node1">Node 1 — loading…</span></div>
+              <div class="system" data-node="node2"><span class="dot" id="dot-node2"></span><span id="label-node2">Node 2 — loading…</span></div>
             </div>
+            <a href="/docs" target="_blank" class="tool" style="margin-top: 12px; display: inline-flex">API Docs →</a>
           </nav>
         </div>
 
         <div class="sidebar-foot">
-          <div class="avatar">JD</div>
+          <div class="avatar" id="avatar">?</div>
           <div>
-            <p class="user-name">Julian D.</p>
-            <p class="user-role">Senior Analyst</p>
+            <p class="user-name" id="user-name">—</p>
+            <p class="user-role" id="user-role">Local test</p>
           </div>
+          <button class="btn-ghost" id="logout" style="margin-left: auto; padding: 4px 8px; font-size: 11px">Logout</button>
         </div>
       </aside>
 
@@ -66,8 +92,14 @@
             <span class="project-title" id="project-title">Q3 Revenue Analysis</span>
           </div>
           <div class="topbar-actions">
-            <button class="btn-ghost" data-export="xlsx">Export to Excel</button>
-            <button class="btn-ghost" data-export="docx">Draft Word Doc</button>
+            <label class="node-select-label">Model:
+              <select id="node-select" class="node-select">
+                <option value="">Auto (router)</option>
+                <option value="node1">Node 1</option>
+                <option value="node2">Node 2</option>
+              </select>
+            </label>
+            <button class="btn-ghost" id="node-health-btn" title="Refresh node health">↻ Nodes</button>
           </div>
         </header>
 
@@ -86,12 +118,8 @@
                 <button class="send" id="send" aria-label="Send message">→</button>
               </div>
               <div class="composer-tools">
-                <button class="tool" data-attach="Database record · inventory_master">
-                  Attach Database Record
-                </button>
-                <button class="tool" data-attach="Q3_Regional_Costs.xlsx">
-                  Reference Excel File
-                </button>
+                <label class="tool" style="cursor: pointer"><input type="checkbox" id="stream-toggle" /> Stream</label>
+                <span class="tool" id="latency-hint"></span>
               </div>
             </div>
           </section>

@@ -1,0 +1,22 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./public:/app/public:ro
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/nexus.db
+      - DATABASE_URL_SYNC=sqlite:////app/data/nexus.db
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  # Optional local Ollama for dev (CPU-only). In production laptops run Ollama on .101/.102
+  # ollama-node1:
+  #   image: ollama/ollama:latest
+  #   ports: ["11434:11434"]
+  #   volumes: [ollama1:/root/.ollama]
+  #
+  # volumes:
+  #   ollama1:

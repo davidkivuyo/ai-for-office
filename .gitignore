@@ -31,6 +31,27 @@ dist-ssr
 *.sln
 *.sw?
 
-# secrets
+# secrets — never commit real env (AGENTS.md §6)
 .env
 *.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.envrc
+.pytest_cache/
+.coverage
+htmlcov/
+mypy_cache/
+.ruff_cache/
+
+# Phase 1 local artifacts
+nexus.db
+*.db
+benchmark_results.csv
+alembic/versions/*.py
+!alembic/versions/.gitkeep
