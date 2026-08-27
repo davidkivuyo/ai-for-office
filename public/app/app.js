@@ -66,13 +66,13 @@ const api = {
   async getConversation(id, opts = {}) {
     return apiFetch(`/api/conversations/${id}`, opts);
   },
-  async sendMessage(conversationId, text, nodeId) {
+  async sendMessage(conversationId, text, nodeId, opts = {}) {
     const body = { message: text, stream: false };
     if (conversationId) body.conversation_id = conversationId;
     if (nodeId) body.node_id = nodeId;
-    return apiFetch("/api/chat", { method: "POST", body: JSON.stringify(body) });
+    return apiFetch("/api/chat", { method: "POST", body: JSON.stringify(body), signal: opts.signal });
   },
-  async sendMessageStream(conversationId, text, nodeId, onToken) {
+  async sendMessageStream(conversationId, text, nodeId, onToken, opts = {}) {
     const body = { message: text, stream: true };
     if (conversationId) body.conversation_id = conversationId;
     if (nodeId) body.node_id = nodeId;
@@ -80,6 +80,7 @@ const api = {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ ...body, stream: true }),
+      signal: opts.signal,
     });
     if (!res.ok) {
       const t = await res.text();
@@ -132,6 +133,42 @@ let messagesCache = []; // current conv messages
 let healthPoll = null;
 let loadMessagesGeneration = 0;
 let loadMessagesAbortController = null;
+let chatAbortController = null;
+let isSending = false;
+let chatGeneration = 0;
+
+function abortCurrentChat() {
+  if (chatAbortController) {
+    try { chatAbortController.abort(); } catch (_) {}
+  }
+  // invalidate any pending submit generation so stale completions don't touch new conversation
+  if (isSending || chatAbortController) {
+    chatGeneration++;
+  }
+  chatAbortController = null;
+  if (isSending) setSendingState(false);
+}
+
+function setSendingState(sending) {
+  isSending = sending;
+  const btn = $("#send");
+  if (!btn) return;
+  if (sending) {
+    btn.textContent = "■";
+    btn.setAttribute("aria-label", "Stop generation");
+    btn.title = "Stop generation";
+    btn.dataset.mode = "stop";
+  } else {
+    btn.textContent = "→";
+    btn.setAttribute("aria-label", "Send message");
+    btn.title = "Send message";
+    btn.dataset.mode = "send";
+  }
+}
+
+function isAbortError(err) {
+  return err && (err.name === "AbortError" || /aborted|AbortError/i.test(err.message || ""));
+}
 
 const $ = (s) => document.querySelector(s);
 const stream = $("#stream");
@@ -155,6 +192,7 @@ async function handleDeleteConversation(convId, convTitle) {
   const title = convTitle || conversations.find((c) => c.id === convId)?.title || "this conversation";
   if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return;
   const isActiveDelete = activeConversation === convId;
+  abortCurrentChat();
   if (isActiveDelete && loadMessagesAbortController) {
     try {
       loadMessagesAbortController.abort();
@@ -195,6 +233,7 @@ function renderConversations() {
     titleSpan.textContent = conv.title;
     titleSpan.title = conv.title;
     const selectConversation = async () => {
+      abortCurrentChat();
       activeConversation = conv.id;
       $("#project-title").textContent = conv.title;
       renderConversations();
@@ -438,13 +477,19 @@ $("#node-health-btn")?.addEventListener("click", refreshNodes);
 
 /* ---------------- Compose ---------------- */
 async function submit(rawText) {
+  if (isSending) return;
   const text = (rawText ?? inputEl.value).trim();
   if (!text) return;
   const nodeId = $("#node-select")?.value || null;
   const useStream = $("#stream-toggle")?.checked;
+  const requestConvId = activeConversation;
   renderMessage({ role: "user", content: text });
   inputEl.value = "";
   const pending = showTyping();
+  const myGen = ++chatGeneration;
+  const controller = new AbortController();
+  chatAbortController = controller;
+  setSendingState(true);
 
   try {
     if (useStream) {
@@ -452,13 +497,19 @@ async function submit(rawText) {
       const bodyEl = pending.querySelector(".msg-body p");
       bodyEl.textContent = "";
       let full = "";
-      const meta = await api.sendMessageStream(activeConversation, text, nodeId, (tok) => {
+      const meta = await api.sendMessageStream(requestConvId, text, nodeId, (tok) => {
+        if (myGen !== chatGeneration) return;
         full += tok;
         bodyEl.textContent = full;
         stream.scrollTop = stream.scrollHeight;
-      });
+      }, { signal: controller.signal });
+      if (myGen !== chatGeneration || controller.signal.aborted) {
+        try { pending.remove(); } catch (_) {}
+        return;
+      }
       pending.remove();
       const replyMeta = meta || {};
+      if (myGen !== chatGeneration) return;
       renderMessage({ role: "assistant", content: full || "(empty response)" }, replyMeta);
       if (replyMeta.conversation_id && !activeConversation) {
         activeConversation = replyMeta.conversation_id;
@@ -471,8 +522,13 @@ async function submit(rawText) {
         // Avoid duplicate render if we already did — just keep as is
       }
     } else {
-      const res = await api.sendMessage(activeConversation, text, nodeId);
+      const res = await api.sendMessage(requestConvId, text, nodeId, { signal: controller.signal });
+      if (myGen !== chatGeneration || controller.signal.aborted) {
+        try { pending.remove(); } catch (_) {}
+        return;
+      }
       pending.remove();
+      if (myGen !== chatGeneration) return;
       if (!activeConversation) {
         activeConversation = res.conversation_id;
         $("#project-title").textContent = conversations.find((c) => c.id === activeConversation)?.title || res.conversation_id;
@@ -482,22 +538,42 @@ async function submit(rawText) {
       await refreshConversations();
     }
   } catch (err) {
-    pending.remove();
+    if (myGen !== chatGeneration) return;
+    if (isAbortError(err)) {
+      try { pending.remove(); } catch (_) {}
+      return;
+    }
+    try { pending.remove(); } catch (_) {}
     const isNetwork = err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError");
     const detail = isNetwork ? "Backend not reachable. Is the FastAPI server running on :8000?" : (err.message || "Unknown error");
+    if (myGen !== chatGeneration) return;
     renderMessage({ role: "assistant", content: `Error: ${detail}` });
+  } finally {
+    if (myGen === chatGeneration && chatAbortController === controller) {
+      chatAbortController = null;
+      setSendingState(false);
+    }
   }
 }
 
 function initCompose() {
-  $("#send")?.addEventListener("click", () => submit());
+  setSendingState(false);
+  $("#send")?.addEventListener("click", () => {
+    if (isSending && chatAbortController) {
+      try { chatAbortController.abort(); } catch (_) {}
+      return;
+    }
+    submit();
+  });
   inputEl?.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      if (isSending) return;
       submit();
     }
   });
   $("#new-conversation")?.addEventListener("click", async () => {
+    abortCurrentChat();
     try {
       const conv = await api.createConversation("Untitled");
       conversations.unshift(conv);

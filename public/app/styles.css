@@ -606,6 +606,14 @@ button {
   background: var(--accent);
 }
 
+.send[data-mode="stop"] {
+  background: var(--neg);
+}
+
+.send[data-mode="stop"]:hover {
+  background: #8a1d12;
+}
+
 .attachments {
   display: flex;
   gap: 8px;

@@ -1,6 +1,5 @@
 # Future plans
 
-* add a "stop" button to cancel a request in progress
 * add full stack register and authentication with JWT tokens, so that users can have their own conversations and history
 * add a "clear conversation" button to reset the chat history
 * add a "rename conversation" button to change the name of a conversation
