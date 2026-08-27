@@ -4,7 +4,6 @@
 * add a "clear conversation" button to reset the chat history
 * add a "rename conversation" button to change the name of a conversation
 * add a "copy message" button to copy a message to the clipboard
-
 * Make the ai output not markdown, but instead a rich text output, so that it can be formatted and styled better
 
 -----
