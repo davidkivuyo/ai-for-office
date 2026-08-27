@@ -9,6 +9,10 @@ class ConversationCreate(BaseModel):
     title: str = Field(default="Untitled", max_length=256)
 
 
+class ConversationUpdate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=256)
+
+
 class ConversationOut(BaseModel):
     id: str
     user_id: str

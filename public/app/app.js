@@ -121,6 +121,9 @@ const api = {
   async deleteConversation(id) {
     return apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
   },
+  async renameConversation(id, title) {
+    return apiFetch(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) });
+  },
   async nodesHealth() {
     return apiFetch("/api/nodes/health");
   },
@@ -219,6 +222,42 @@ async function handleDeleteConversation(convId, convTitle) {
   }
 }
 
+async function handleRenameConversation(convId, currentTitle) {
+  const existing = conversations.find((c) => c.id === convId)?.title || currentTitle || "";
+  const next = window.prompt("Rename conversation", existing);
+  if (next === null) return;
+  const title = next.trim();
+  if (!title || title === existing) return;
+  if (title.length > 256) {
+    alert("Title is too long (max 256 characters).");
+    return;
+  }
+  // Abort any in-flight chat that might be stale after rename
+  abortCurrentChat();
+  try {
+    const updated = await api.renameConversation(convId, title);
+    const idx = conversations.findIndex((c) => c.id === convId);
+    if (idx !== -1) conversations[idx] = updated;
+    if (activeConversation === convId) {
+      $("#project-title").textContent = updated.title;
+    }
+    renderConversations();
+  } catch (e) {
+    alert(`Could not rename conversation: ${e.message || e}`);
+  }
+}
+
+function deriveTitleFromMessage(message) {
+  const raw = String(message || "").trim().split("\n")[0].trim();
+  if (!raw) return "Untitled";
+  return raw.replace(/\s+/g, " ").slice(0, 60).trim() || "Untitled";
+}
+
+function isGenericTitle(title) {
+  const t = String(title || "").trim();
+  return t === "Untitled" || t === "Untitled Document" || t === "Untitled Document (unsaved)" || t === "" || t.startsWith("Untitled");
+}
+
 function renderConversations() {
   listEl.innerHTML = "";
   conversations.forEach((conv) => {
@@ -241,15 +280,32 @@ function renderConversations() {
     };
     // selecting conversation — click on row or title
     li.addEventListener("click", async (e) => {
-      if (e.target.closest(".conv-delete")) return;
+      if (e.target.closest(".conv-delete") || e.target.closest(".conv-rename")) return;
       await selectConversation();
     });
     li.addEventListener("keydown", async (e) => {
-      if (e.target.closest(".conv-delete")) return;
+      if (e.target.closest(".conv-delete") || e.target.closest(".conv-rename")) return;
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
         e.preventDefault();
         await selectConversation();
       }
+    });
+
+    titleSpan.addEventListener("dblclick", async (e) => {
+      e.stopPropagation();
+      await handleRenameConversation(conv.id, conv.title);
+    });
+
+    const renameBtn = el("button", "conv-rename");
+    renameBtn.type = "button";
+    renameBtn.dataset.conversationId = conv.id;
+    renameBtn.setAttribute("aria-label", `Rename conversation: ${conv.title}`);
+    renameBtn.setAttribute("title", "Rename conversation");
+    renameBtn.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+    renameBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await handleRenameConversation(conv.id, conv.title);
     });
 
     const delBtn = el("button", "conv-delete");
@@ -265,6 +321,7 @@ function renderConversations() {
     });
 
     li.appendChild(titleSpan);
+    li.appendChild(renameBtn);
     li.appendChild(delBtn);
     listEl.appendChild(li);
   });
@@ -485,6 +542,10 @@ async function submit(rawText) {
   const requestConvId = activeConversation;
   renderMessage({ role: "user", content: text });
   inputEl.value = "";
+  // Optimistically show context-aware title for new or generic conversations
+  if (!requestConvId || isGenericTitle(conversations.find((c) => c.id === requestConvId)?.title || "")) {
+    $("#project-title").textContent = deriveTitleFromMessage(text);
+  }
   const pending = showTyping();
   const myGen = ++chatGeneration;
   const controller = new AbortController();
@@ -515,11 +576,12 @@ async function submit(rawText) {
         activeConversation = replyMeta.conversation_id;
       }
       if (replyMeta.latency_ms) latencyHint.textContent = `${replyMeta.actual_model || ""} · ${replyMeta.latency_ms}ms`;
-      // Refresh list if this was a new conversation
+      // Refresh list if this was a new conversation — also picks up auto-rename for generic titles
       await refreshConversations();
+      if (myGen !== chatGeneration) return;
       if (activeConversation) {
-        // Ensure we stay on this conv; reload messages to sync
-        // Avoid duplicate render if we already did — just keep as is
+        const updated = conversations.find((c) => c.id === activeConversation);
+        if (updated) $("#project-title").textContent = updated.title;
       }
     } else {
       const res = await api.sendMessage(requestConvId, text, nodeId, { signal: controller.signal });
@@ -536,6 +598,11 @@ async function submit(rawText) {
       renderMessage({ role: "assistant", content: res.reply }, res);
       latencyHint.textContent = `${res.actual_model} · ${res.latency_ms}ms`;
       await refreshConversations();
+      if (myGen !== chatGeneration) return;
+      if (activeConversation) {
+        const updated = conversations.find((c) => c.id === activeConversation);
+        if (updated) $("#project-title").textContent = updated.title;
+      }
     }
   } catch (err) {
     if (myGen !== chatGeneration) return;
@@ -572,23 +639,14 @@ function initCompose() {
       submit();
     }
   });
-  $("#new-conversation")?.addEventListener("click", async () => {
+  $("#new-conversation")?.addEventListener("click", () => {
     abortCurrentChat();
-    try {
-      const conv = await api.createConversation("Untitled");
-      conversations.unshift(conv);
-      activeConversation = conv.id;
-      $("#project-title").textContent = conv.title;
-      clearStream();
-      renderConversations();
-    } catch (e) {
-      // Fallback: local draft only. Let the backend create the conversation
-      // on the first message so the id stays server-owned.
-      activeConversation = null;
-      $("#project-title").textContent = "Untitled Document (unsaved)";
-      clearStream();
-      renderConversations();
-    }
+    // Create local draft — server conversation will be auto-created with a context-aware title on first message
+    activeConversation = null;
+    $("#project-title").textContent = "New conversation";
+    clearStream();
+    renderConversations();
+    inputEl?.focus();
   });
 }
 

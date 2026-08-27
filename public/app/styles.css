@@ -203,6 +203,54 @@ button {
   color: var(--neg);
 }
 
+.conv-rename {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: rgb(26 26 27 / 0.35);
+  background: transparent;
+  border: 1px solid transparent;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+  opacity: 0.7;
+}
+
+.conv-rename:hover {
+  background: rgb(45 51 107 / 0.08);
+  color: var(--accent);
+  border-color: rgb(45 51 107 / 0.15);
+}
+
+.conv-rename:active {
+  background: rgb(45 51 107 / 0.14);
+}
+
+.conv-rename:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+.conv-list li:hover .conv-rename,
+.conv-list li:focus-within .conv-rename {
+  opacity: 1;
+}
+
+.conv-list li.active .conv-rename {
+  color: rgb(45 51 107 / 0.5);
+}
+
+.conv-list li.active .conv-rename:hover {
+  color: var(--accent);
+}
+
 .systems {
   display: flex;
   flex-direction: column;

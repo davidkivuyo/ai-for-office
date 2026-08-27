@@ -23,6 +23,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
+def _derive_title(message: str) -> str:
+    raw = message.strip().splitlines()[0].strip() if message.strip() else ""
+    if not raw:
+        return "Untitled"
+    import re
+
+    title = re.sub(r"\s+", " ", raw[:60].strip())
+    return title or "Untitled"
+
+
+def _is_generic_title(title: str) -> bool:
+    t = (title or "").strip()
+    return t in ("Untitled", "Untitled Document", "Untitled Document (unsaved)", "") or t.startswith("Untitled")
+
+
 def _build_messages(history: list, new_content: str) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     for m in history:
@@ -60,9 +75,17 @@ async def chat(
         conversation = await get_conversation(db, payload.conversation_id, current.id)
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        if _is_generic_title(conversation.title):
+            new_title = _derive_title(payload.message)
+            if new_title and new_title != conversation.title:
+                conversation.title = new_title
+                from datetime import datetime, timezone
+
+                conversation.updated_at = datetime.now(timezone.utc)
+                await db.flush()
     else:
-        # Auto-create with title from first message prefix
-        title = payload.message[:60] or "Untitled"
+        # Auto-create with title from first message prefix (context-aware)
+        title = _derive_title(payload.message)
         conversation = await create_conversation(db, current.id, title=title)
         await db.flush()
 
@@ -196,8 +219,16 @@ async def chat_stream(
         conversation = await get_conversation(db, payload.conversation_id, current.id)
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        if _is_generic_title(conversation.title):
+            new_title = _derive_title(payload.message)
+            if new_title and new_title != conversation.title:
+                conversation.title = new_title
+                from datetime import datetime, timezone
+
+                conversation.updated_at = datetime.now(timezone.utc)
+                await db.flush()
     else:
-        conversation = await create_conversation(db, current.id, title=payload.message[:60] or "Untitled")
+        conversation = await create_conversation(db, current.id, title=_derive_title(payload.message))
         await db.flush()
 
     await create_message(db, conversation.id, role="user", content=payload.message)

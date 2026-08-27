@@ -42,6 +42,16 @@ async def create_conversation(db: AsyncSession, user_id: str, title: str = "Unti
     return conv
 
 
+async def update_conversation_title(db: AsyncSession, conversation: Conversation, title: str) -> Conversation:
+    conversation.title = title
+    # updated_at will be bumped via onupdate or manually
+    from datetime import datetime, timezone
+
+    conversation.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return conversation
+
+
 # --- messages ---
 async def list_messages(db: AsyncSession, conversation_id: str) -> list[Message]:
     result = await db.execute(select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at.asc()))
