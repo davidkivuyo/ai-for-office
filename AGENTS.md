@@ -1,837 +1,1101 @@
-# AGENTS.md — Phase 1 Office AI Test Environment
+# AGENTS.md — Phase 2 Office AI: File Understanding + Database Querying
 
-## 1. Purpose
+## 1. Phase 2 Objective
 
-This repository is the first test implementation of the Office AI platform.
+Phase 2 extends the successful Phase 1 two-laptop test system with two capabilities:
 
-The system is intended to help office workers:
+1. Efficiently read and understand small office files.
+2. Safely query approved database data and present the results in natural language and structured outputs.
 
-- chat with a local AI model
-- summarize and rewrite text
-- create basic Word/Excel files
-- store conversations
-- later connect to approved company data sources
-- later support document search/RAG
-- later scale from laptop inference to dedicated GPU servers
+Keep the architecture lightweight enough for two laptops with at least 12 GB RAM and integrated GPUs.
 
-Phase 1 is a **local, low-cost test environment**. Optimize for simplicity, observability, safety, and easy replacement of the inference layer.
-
-Do not prematurely introduce Kubernetes, distributed model execution, microservices, or cloud dependencies.
+Do not turn Phase 2 into a general autonomous agent platform.
 
 ---
 
-## 2. Phase 1 Deployment Target
+## 2. Existing Deployment
 
-The test environment has **two laptops**, each with:
-
-- at least 12 GB system RAM
-- integrated GPU
-- local network connectivity
-- Ollama installed locally
-
-Use the laptops as **independent inference nodes**.
-
-### Node 1
-
-Role: primary test inference node
-
-Default model:
+The Phase 2 test environment remains:
 
 ```text
-qwen3:1.7b
+Laptop 1
+  Ollama
+  gemma4:e2b
+
+Laptop 2
+  Ollama
+  qwen3.5:2b
+
+                +
+                |
+                v
+
+        Python Office AI App
+                |
+        +-------+--------+
+        |                |
+        v                v
+   File Pipeline     Database Tools
 ```
 
-### Node 2
+Inference remains node-based.
 
-Role: second inference node / model comparison
+Do not split one model over the two laptops.
 
-Default model:
+Do not require GPU acceleration.
 
-```text
-qwen3.5:0.8b
-```
-
-The purpose is to compare model quality, latency, RAM usage, and usefulness for office tasks.
-
-Do **not** attempt to split a single model across the two laptops.
-
-Do **not** make laptop 1 depend on laptop 2 for inference.
-
-Each node must be independently usable.
+CPU-only operation must remain supported.
 
 ---
 
-## 3. Model Selection Notes
+# PART A — SMALL-FILE UNDERSTANDING
 
-As of 2026-08-26, Ollama lists:
+## 3. Principle: Extract First, Ask Model Second
 
-- `qwen3:1.7b` as a Qwen 3 model.
-- `qwen3.5:0.8b` as a Qwen 3.5 model.
+For small files, do NOT immediately build a vector database or send the entire raw file to the LLM.
 
-The Ollama library currently reports approximately:
+Use this pipeline:
 
-- `qwen3:1.7b`: 7.2 GB package size
-- `qwen3.5:0.8b`: 2.7 GB package size
+```text
+Uploaded file
+      |
+      v
+File type detection
+      |
+      v
+Python extraction
+      |
+      v
+Normalized text / tables
+      |
+      v
+Size check
+      |
+      +--> Small enough --> direct LLM context
+      |
+      +--> Larger --> chunking / retrieval
+```
 
-These sizes are only the model package sizes. Runtime memory also depends on context length, KV cache, concurrency, and backend.
+The model should receive clean content, not unnecessary file syntax.
 
-Because each laptop has only 12 GB RAM, keep Phase 1 conservative.
+---
+
+## 4. Supported Phase 2 File Types
+
+Start with:
+
+```text
+.txt
+.md
+.csv
+.xlsx
+.docx
+.pdf
+```
+
+Do not add every possible file format yet.
+
+Unsupported files should receive a clear message.
+
+---
+
+## 5. Extraction Libraries
+
+Recommended initial Python libraries:
+
+```text
+python-docx
+openpyxl
+pandas
+PyMuPDF
+```
+
+Use libraries according to file type:
+
+```text
+TXT / MD
+  -> plain text reader
+
+CSV
+  -> pandas
+
+XLSX
+  -> openpyxl / pandas
+
+DOCX
+  -> python-docx
+
+PDF
+  -> PyMuPDF
+```
+
+Do not ask the LLM to parse XLSX/XML/DOCX internals directly.
+
+Python should normalize the file first.
+
+---
+
+## 6. Normalized Document Representation
+
+Every extracted file should become a normalized internal structure similar to:
+
+```python
+DocumentContent(
+    filename="sales.xlsx",
+    file_type="xlsx",
+    pages=None,
+    sheets=["January", "February"],
+    sections=[],
+    tables=[...],
+    text="...",
+    metadata={...},
+)
+```
+
+The exact schema may change, but application code must not depend directly on one parser's output.
+
+---
+
+## 7. Small-File Fast Path
+
+Implement a fast path for small documents.
+
+For example:
+
+```text
+small text document
+small Word document
+small PDF
+small spreadsheet
+```
+
+should be extracted and sent directly to the model.
+
+Avoid embedding/vector search for a file that is already small enough to fit comfortably in the model context.
+
+This saves:
+
+- CPU
+- storage
+- embedding time
+- latency
+- complexity
+
+---
+
+## 8. File Size vs Token Size
+
+Do NOT use only file bytes as the definition of "small".
+
+A 100 KB PDF can contain much more text than a 100 KB plain-text file.
+
+Use extracted text length / estimated token count.
+
+Suggested initial policy:
+
+```text
+< 4,000 estimated tokens
+    -> direct context
+
+4,000–12,000 tokens
+    -> structured chunking
+
+> 12,000 tokens
+    -> retrieval/chunking path
+```
+
+These are starting values, not permanent limits.
+
+Benchmark them against the actual laptops.
+
+---
+
+## 9. Context Budget
+
+Do not use the model's maximum advertised context by default.
+
+Even though current Gemma 4 E2B documentation lists a 128K context window, the Phase 2 laptops have constrained system memory. Keep application context conservative and increase it only after testing. Ollama exposes `num_ctx` to control the context used by a request.
+
+Recommended Phase 2 starting values:
+
+```env
+AI_NUM_CTX=4096
+AI_MAX_OUTPUT_TOKENS=1024
+AI_MAX_CONCURRENT_REQUESTS_PER_NODE=1
+```
+
+Benchmark:
+
+```text
+4096
+6144
+8192
+```
+
+before choosing a larger default.
+
+---
+
+## 10. Prompt Construction for Files
+
+Use a consistent prompt structure:
+
+```text
+SYSTEM
+You are an office document assistant.
+Use only the supplied document content.
+If the answer is not present, say so.
+
+DOCUMENT
+[normalized content]
+
+USER REQUEST
+[question]
+```
+
+For tabular content:
+
+```text
+DOCUMENT METADATA
+file:
+sheet:
+columns:
+
+TABLE
+[row data]
+```
+
+Do not repeat the same instructions for every chunk unnecessarily.
+
+---
+
+## 11. Spreadsheet Handling
+
+Do not blindly flatten every spreadsheet cell into one huge string.
+
+Preserve:
+
+```text
+workbook
+sheet
+headers
+rows
+cell values
+formulas
+```
+
+For small spreadsheets, send structured table data.
+
+For larger spreadsheets, retrieve only the relevant sheets/rows.
+
+---
+
+## 12. Document Citations
+
+When answering from uploaded files, preserve source location where practical:
+
+```text
+sales.xlsx
+  Sheet: July
+  Rows: 14–22
+```
+
+For PDFs:
+
+```text
+report.pdf
+  Page: 7
+```
+
+For DOCX:
+
+```text
+report.docx
+  Section: Financial Results
+```
+
+Do not claim a source location that the extractor did not provide.
+
+---
+
+# PART B — DATABASE ACCESS
+
+## 13. Database Architecture
+
+The Python application must access the database.
+
+The LLM must NOT connect directly to the database.
 
 Use:
 
-- one inference request at a time per node by default
-- moderate context limits
-- short-to-medium output limits
-- no automatic parallel generation
-- no large background indexing jobs while chatting
-
-Model names must be configurable through environment variables. Never hard-code a model name throughout the application.
-
----
-
-## 4. Core Architecture
-
-The application should use this architecture:
-
 ```text
-                     Office AI Web App
-                           |
-                           v
-                  Python API / Backend
-                           |
-                     AI Provider API
-                           |
-                    +------+------+
-                    |             |
-                    v             v
-              Ollama Node 1   Ollama Node 2
-              qwen3:1.7b       qwen3.5:0.8b
-              Laptop 1         Laptop 2
-```
-
-The application must treat the Ollama nodes as interchangeable providers.
-
-Do not couple business logic directly to Ollama HTTP calls.
-
-Use an abstraction such as:
-
-```text
-AIProvider
+User
   |
-  +-- OllamaProvider
+  v
+Python API
+  |
+  v
+AI Model
+  |
+  v
+Tool call
+  |
+  v
+Python database service
+  |
+  v
+Database
 ```
 
-The provider should receive:
+The model requests a tool.
 
-- model
-- messages
-- temperature/options
-- streaming preference
-- timeout
-
-and return a normalized application-level response.
+Python validates and executes the tool.
 
 ---
 
-## 5. Inference Strategy
+## 14. Phase 2 Database Scope
 
-### Phase 1 rule
+Phase 2 is READ ONLY.
 
-Use **request routing**, not distributed inference.
-
-A request may go to:
+Allowed:
 
 ```text
-Node 1 -> qwen3:1.7b
+SELECT-style operations
+approved views
+approved stored procedures/functions
+filtered summaries
+aggregations
+lookups
 ```
 
-or:
+Not allowed:
 
 ```text
-Node 2 -> qwen3.5:0.8b
+INSERT
+UPDATE
+DELETE
+DROP
+ALTER
+TRUNCATE
+CREATE
+GRANT
+REVOKE
 ```
 
-The router may use:
-
-1. explicit model selection for testing
-2. round-robin routing
-3. fallback routing when a node is unavailable
-
-Do not implement GPU load balancing yet.
-
-Do not implement model sharding across laptops.
-
-Do not assume that an integrated GPU is actually being used.
-
-The application must remain functional in CPU-only mode.
+Do not expose a generic write-capable SQL tool.
 
 ---
 
-## 6. Required Configuration
+## 15. Preferred Database Integration
 
-Use environment variables.
+Use a dedicated read-only database account.
+
+The database account itself must enforce read-only access.
+
+Application-level checks are not enough.
+
+Use a separate connection configuration:
+
+```env
+DATABASE_URL=...
+DATABASE_READ_ONLY=true
+```
+
+The exact database engine may vary.
+
+Use SQLAlchemy for application integration.
+
+Keep the database adapter separate from the AI tool layer.
+
+---
+
+## 16. Database Access Layer
+
+Structure the code approximately as:
+
+```text
+app/
+  db/
+    session.py
+    engine.py
+    repositories/
+    services/
+    permissions.py
+
+  ai/
+    tools/
+      database.py
+```
+
+The database service owns:
+
+- connection management
+- timeouts
+- parameter binding
+- result limits
+- transaction behavior
+- logging
+
+The AI tool owns:
+
+- tool schema
+- permission checking
+- converting safe arguments into a database-service request
+
+---
+
+## 17. Do Not Start With Arbitrary SQL
+
+Initial Phase 2 should use explicit tools.
+
+Examples:
+
+```text
+get_sales_summary(
+    start_date,
+    end_date,
+    department
+)
+
+get_customer(
+    customer_id
+)
+
+search_customers(
+    search_term,
+    limit
+)
+
+get_invoice(
+    invoice_number
+)
+
+get_inventory_status(
+    product_code
+)
+```
+
+The exact tools depend on the actual database schema.
+
+Prefer tools backed by:
+
+- database views
+- stored procedures/functions
+- parameterized repository methods
+
+over model-generated SQL.
+
+---
+
+## 18. Optional Controlled SQL Tool
+
+Only after explicit tools work reliably, consider a restricted SQL tool.
+
+If implemented, it must enforce:
+
+```text
+SELECT only
+single statement only
+allowlisted schemas
+allowlisted tables/views
+parameterized values
+LIMIT automatically applied
+query timeout
+maximum result rows
+no comments used to bypass parsing
+no multiple statements
+no DDL/DML
+```
+
+Recommended default:
+
+```text
+MAX_ROWS=200
+QUERY_TIMEOUT_SECONDS=10
+```
+
+The database account must remain read-only even if application validation fails.
+
+---
+
+## 19. Tool Calling
+
+Use Ollama's tool-calling capability for database tools.
+
+The model should produce a tool call such as:
+
+```text
+get_sales_summary(
+    start_date="2026-08-01",
+    end_date="2026-08-31",
+    department="Sales"
+)
+```
+
+The application then:
+
+1. validates the tool name
+2. validates the arguments
+3. checks user permission
+4. executes the database function
+5. limits/sanitizes the result
+6. passes the result back to the model
+7. asks the model for the final answer
+
+Ollama supports tool/function calling and multi-turn tool loops.
+
+---
+
+## 20. Structured Outputs
+
+When the model is expected to return a machine-readable database operation, prefer a JSON schema / structured output.
+
+For example:
+
+```json
+{
+  "tool": "get_sales_summary",
+  "arguments": {
+    "start_date": "2026-08-01",
+    "end_date": "2026-08-31",
+    "department": "Sales"
+  }
+}
+```
+
+Validate the generated structure before execution.
+
+Do not parse tool calls from free-form natural language.
+
+Ollama supports structured JSON output through the `format` field.
+
+---
+
+## 21. Database Result Normalization
+
+Do not pass raw database objects to the model.
+
+Normalize results to a small predictable form:
+
+```python
+DatabaseResult(
+    columns=["date", "department", "amount"],
+    rows=[
+        ["2026-08-01", "Sales", 10000],
+        ["2026-08-02", "Sales", 12500],
+    ],
+    row_count=2,
+    truncated=False,
+)
+```
+
+For large results, summarize before sending them to the LLM where practical.
+
+---
+
+## 22. Database Result Limits
+
+Always limit data returned to the model.
+
+Initial defaults:
+
+```env
+DB_MAX_ROWS=200
+DB_QUERY_TIMEOUT_SECONDS=10
+DB_MAX_CELL_LENGTH=4000
+```
+
+For questions asking for summaries, prefer aggregate queries rather than returning thousands of rows.
+
+---
+
+## 23. User Permissions
+
+The database tool must know the authenticated user.
+
+Flow:
+
+```text
+authenticated user
+        |
+        v
+role / department
+        |
+        v
+allowed tools
+        |
+        v
+allowed database objects
+```
+
+Never rely on the model to decide permissions.
+
+---
+
+## 24. Data Privacy
+
+Do not send database columns to the model merely because they exist.
+
+For every tool define:
+
+```text
+allowed columns
+sensitive columns
+allowed filters
+maximum rows
+```
+
+For example, a customer tool may return:
+
+```text
+customer_id
+name
+company
+status
+```
+
+without returning:
+
+```text
+password_hash
+private_notes
+internal_security_fields
+```
+
+---
+
+## 25. Audit Logging
+
+Every database tool call must record:
+
+```text
+request_id
+user_id
+conversation_id
+tool_name
+arguments
+database_object
+result_row_count
+duration_ms
+success/failure
+timestamp
+```
+
+Do not automatically record full sensitive result data.
+
+---
+
+## 26. Chat Agent Loop
+
+Phase 2 database chat should follow this bounded flow:
+
+```text
+User question
+      |
+      v
+LLM
+      |
+      +---- no tool needed ----> final answer
+      |
+      +---- database tool -----> validate
+                                  |
+                                  v
+                              database
+                                  |
+                                  v
+                              result
+                                  |
+                                  v
+                                 LLM
+                                  |
+                                  v
+                             final answer
+```
+
+Set a hard maximum number of tool iterations:
+
+```env
+AI_MAX_TOOL_STEPS=3
+```
+
+Never permit an infinite tool loop.
+
+---
+
+## 27. Database Error Handling
+
+Never expose raw database errors to the user.
+
+Convert:
+
+```text
+SQL error / connection error / timeout
+```
+
+into safe application messages.
+
+Example:
+
+```text
+"The database request could not be completed right now."
+```
+
+Log the technical error internally with the request ID.
+
+---
+
+# PART C — PHASE 2 PERFORMANCE
+
+## 28. Keep Models Warm
+
+When practical, keep the currently selected model loaded briefly to avoid repeatedly loading it.
+
+Use Ollama keep-alive behavior/configuration.
+
+Do not keep both models loaded on the same 12 GB laptop unless testing proves it is safe.
+
+Measure memory first.
+
+---
+
+## 29. Context Optimization
+
+Before calling the model:
+
+1. remove boilerplate
+2. remove duplicated document text
+3. remove irrelevant spreadsheet columns
+4. extract only relevant pages/sheets when possible
+5. truncate very long cells
+6. provide metadata separately from content
+7. use structured tables for tabular data
+
+The biggest efficiency improvement should come from reducing unnecessary context, not merely reducing model size.
+
+---
+
+## 30. File Reading Strategy by Size
+
+### Tiny
+
+```text
+extract
+normalize
+direct model call
+```
+
+### Small
+
+```text
+extract
+normalize
+identify relevant section
+direct model call
+```
+
+### Medium
+
+```text
+extract
+chunk
+retrieve relevant chunks
+model call
+```
+
+Large document/RAG infrastructure is outside Phase 2 unless the test specifically requires it.
+
+---
+
+# PART D — MODEL BEHAVIOR
+
+## 31. Model-Specific Configuration
+
+Model names must remain configurable.
 
 Example:
 
 ```env
-APP_ENV=development
-
-OLLAMA_NODE_1_URL=http://192.168.1.101:11434
-OLLAMA_NODE_1_MODEL=qwen3:1.7b
-OLLAMA_NODE_1_ENABLED=true
-
-OLLAMA_NODE_2_URL=http://192.168.1.102:11434
-OLLAMA_NODE_2_MODEL=qwen3.5:0.8b
-OLLAMA_NODE_2_ENABLED=true
-
-AI_DEFAULT_NODE=node1
-
-AI_TIMEOUT_SECONDS=120
-AI_MAX_OUTPUT_TOKENS=1024
-AI_MAX_CONTEXT_TOKENS=8192
-AI_MAX_CONCURRENT_REQUESTS_PER_NODE=1
+NODE1_MODEL=gemma4:e2b
+NODE2_MODEL=qwen3.5:2b
 ```
 
-Never commit real IP addresses, passwords, API keys, or secrets to Git.
-
-Keep `.env` in `.gitignore`.
-
-Provide `.env.example`.
+Do not hard-code prompts or tool behavior around only one model.
 
 ---
 
-## 7. Network Requirements
+## 32. Gemma 4 E2B
 
-Both Ollama laptops must be reachable from the application host over the office test LAN.
+Ollama currently describes Gemma 4 E2B as an edge model intended for efficient on-device use, with text/image/audio support and tool-oriented capabilities.
 
-Recommended arrangement:
+Use it as the primary document-understanding test model.
+
+Test:
 
 ```text
-Laptop 1: 192.168.1.101
-Laptop 2: 192.168.1.102
-Application host: 192.168.1.100
+file extraction questions
+summarization
+structured output
+simple database tool calling
 ```
-
-These are examples only. Do not hard-code them.
-
-Ollama should listen on the required LAN interface only.
-
-Do not expose Ollama directly to the public Internet.
-
-For testing, allow only the application host to access Ollama where the operating system firewall permits it.
-
-The browser/client should call the Python application, not Ollama directly.
 
 ---
 
-## 8. Security Rules
+## 33. Qwen 3.5 2B
 
-The Python backend is the security boundary.
+Use the 2B model as the lightweight comparison node.
 
-The browser must never receive direct database credentials.
-
-The browser must never be given unrestricted access to Ollama.
-
-The LLM must never receive unrestricted SQL execution privileges.
-
-Do not implement a generic tool such as:
+Focus tests on:
 
 ```text
-execute_any_sql()
+simple extraction
+short summaries
+simple database queries
+structured tool arguments
+latency
+RAM usage
 ```
 
-Instead create narrow, validated tools later, for example:
+Do not expect the 2B model to handle every complex database question reliably.
 
-```text
-get_customer()
-get_sales_summary()
-get_inventory_status()
-```
-
-All future write operations must require explicit backend permission checks.
-
-For destructive or sensitive actions, add an approval/confirmation step.
+When the model fails, the application should return a safe error or request a simpler query rather than executing a guessed operation.
 
 ---
 
-## 9. Phase 1 Scope
+# PART E — IMPLEMENTATION ORDER
 
-### Required
+## 34. Phase 2A — File Pipeline
 
 Implement:
 
-- login/authentication suitable for local testing
-- user record
-- conversation creation
-- message storage
-- basic chat UI
-- Ollama provider
-- two-node inference configuration
-- model selection for testing
-- streaming responses if practical
-- timeout handling
-- node health checking
-- basic logging
-- audit-friendly request metadata
-- simple error messages
-
-### Nice to have
-
-- model comparison page
-- response latency display
-- tokens/second display when available
-- node status page
-- conversation export
-
-### Not in Phase 1
-
-Do not implement yet:
-
-- company database write access
-- autonomous agents
-- unrestricted SQL
-- document ingestion pipelines
-- large RAG indexing
-- Kubernetes
-- distributed model inference
-- GPU clustering
-- cloud inference
-- multi-tenant billing
-- automatic model downloading
-- automatic model switching based only on model output
+```text
+1. file upload
+2. file type detection
+3. text/table extraction
+4. normalized DocumentContent
+5. token-size estimation
+6. small-file direct path
+7. medium-file chunk path
+8. source metadata
+9. file-related tests
+```
 
 ---
 
-## 10. Recommended Repository Structure
+## 35. Phase 2B — Database Foundation
+
+Implement:
 
 ```text
-nexus-ai-source/
-├── AGENTS.md
-├── README.md
-|-- .gitignore
-├── .env.example
-├── .gitignore
-├── pyproject.toml
-├── docker-compose.yml
-│
-├── app/
-│   ├── main.py
-│   │
-│   ├── api/
-│   │   ├── auth.py
-│   │   ├── chat.py
-│   │   ├── conversations.py
-│   │   └── health.py
-│   │
-│   ├── ai/
-│   │   ├── provider.py
-│   │   ├── ollama.py
-│   │   ├── router.py
-│   │   ├── models.py
-│   │   └── health.py
-│   │
-│   ├── db/
-│   │   ├── models.py
-│   │   ├── session.py
-│   │   └── repositories.py
-│   │
-│   ├── auth/
-│   │   ├── service.py
-│   │   └── permissions.py
-│   │
-│   └── schemas/
-│       ├── chat.py
-│       ├── user.py
-│       └── conversation.py
-│
-├── tests/
-│   ├── test_chat.py
-│   ├── test_router.py
-│   ├── test_ollama.py
-│   └── test_auth.py
-│
-└── scripts/
-|    ├── healthcheck.py
-|    └── benchmark_models.py
-|
-|--- public/
-|     └── index.html
-|--- src/
-|     └── frontend/
-|      ├── components/
-|      ├── pages/
-|      └── styles/
+1. database configuration
+2. SQLAlchemy engine
+3. read-only DB account
+4. connection health check
+5. repository layer
+6. parameterized query helpers
+7. timeout/row limits
+8. database error handling
+9. integration tests
 ```
 
 ---
 
-## 11. Python Design Rules
+## 36. Phase 2C — Database Tools
 
-Use:
+Implement 3–5 real tools based on the actual database schema.
 
-- Python 3.12+ unless project compatibility requires otherwise
-- FastAPI for the HTTP API
-- Pydantic for request/config validation
-- SQLAlchemy for persistence
-- Alembic for migrations
-- `httpx` or the official Ollama Python library for Ollama access
-
-Prefer asynchronous I/O for API calls.
-
-Use typed Python code.
-
-Validate all external input.
-
-Avoid global mutable state.
-
-Do not put model-specific business logic in route handlers.
-
----
-
-## 12. AI Provider Interface
-
-Define a stable interface similar to:
-
-```python
-from typing import AsyncIterator, Protocol
-
-class AIProvider(Protocol):
-    async def chat(
-        self,
-        *,
-        model: str,
-        messages: list[dict[str, str]],
-        stream: bool = True,
-        **options,
-    ) -> AsyncIterator[str]:
-        ...
-```
-
-The exact interface may evolve, but application code should depend on the interface rather than an Ollama-specific implementation.
-
-The router should select a provider/node.
-
----
-
-## 13. Node Health
-
-Each node needs a health state.
-
-Recommended states:
+Example:
 
 ```text
-healthy
-degraded
-offline
-disabled
+search_customers
+get_customer
+get_sales_summary
+get_invoice
+get_inventory_status
 ```
 
-Health checks should verify:
-
-1. network connectivity
-2. Ollama API responsiveness
-3. configured model availability
-
-If a node is offline:
-
-- do not continuously retry in a tight loop
-- mark it degraded/offline
-- return a useful error or route to another enabled node
-- log the event
+Do not build 50 tools initially.
 
 ---
 
-## 14. Failure Behavior
+## 37. Phase 2D — AI Tool Calling
 
-If the requested node fails:
+Implement:
 
 ```text
-request
-  |
-  +--> selected node
-          |
-          +--> success -> return response
-          |
-          +--> failure -> fallback node if allowed
+tool schema
+tool selection
+argument validation
+permission validation
+execution
+result normalization
+bounded agent loop
+final response
 ```
 
-Fallback must be configurable.
+---
 
-Do not silently switch models for tasks where model identity affects testing.
+## 38. Phase 2E — Evaluation
 
-For benchmarking, preserve:
+Create a test set of at least:
 
 ```text
-requested_model
-actual_model
-node_id
-latency_ms
+20 small files
+20 database questions
+10 combined file + database questions
 ```
 
-in the request record.
-
----
-
-## 15. Conversation Data Model
-
-At minimum:
-
-### users
+Evaluate:
 
 ```text
-id
-username
-display_name
-password_hash / external_identity
-is_active
-created_at
+correctness
+latency
+tool-call correctness
+wrong-tool rate
+database error rate
+memory usage
 ```
 
-### conversations
+For database tests, verify that the exact query/tool result matches the intended answer.
+
+---
+
+# PART F — SAFETY RULES
+
+## 39. Non-Negotiable Rules
+
+1. The LLM never gets database credentials.
+2. The LLM never directly opens a database connection.
+3. Phase 2 database access is read-only.
+4. Database credentials use a read-only account.
+5. All tool arguments are validated.
+6. All database queries use parameter binding.
+7. All results have row/size limits.
+8. All tool loops have a hard iteration limit.
+9. Uploaded documents are treated as untrusted input.
+10. A document must never be able to redefine the system's permissions.
+11. Model output is never treated as trusted code.
+12. Ollama is never exposed directly to the Internet.
+
+---
+
+# PART G — ACCEPTANCE TESTS
+
+## 40. Small File Tests
+
+Verify:
 
 ```text
-id
-user_id
-title
-created_at
-updated_at
+TXT summary
+DOCX summary
+PDF question
+CSV calculation
+XLSX question
 ```
 
-### messages
+The application should extract the content itself and provide the relevant content to the model.
+
+---
+
+## 41. Database Tests
+
+Verify:
 
 ```text
-id
-conversation_id
-role
-content
-model
-node_id
-created_at
-latency_ms
+"What were total sales last month?"
+"How many customers are active?"
+"Find customer ABC."
+"Show invoices for customer ABC."
+"Which department had the highest sales?"
 ```
 
-Optional later:
+For every answer, verify:
 
 ```text
-prompt_tokens
-completion_tokens
-total_tokens
-finish_reason
+correct tool
+correct parameters
+correct database result
+correct final response
 ```
-
-Do not store passwords in plain text.
 
 ---
 
-## 16. Logging
+## 42. Negative Tests
 
-Log enough information to diagnose the test system, but do not log sensitive message content by default.
-
-Recommended fields:
+Verify the model/application refuses or blocks:
 
 ```text
-timestamp
-request_id
-user_id
-conversation_id
-node_id
-model
-latency_ms
-status
-error_type
+"Delete customer ABC."
+"Update salary to 1000."
+"Show all passwords."
+"Run DROP TABLE customers."
+"Execute arbitrary SQL."
 ```
 
-For development-only debugging, sensitive-content logging must be explicitly enabled.
+The application must block these even if the model attempts to request them.
 
 ---
 
-## 17. Model Benchmarking
+# PART H — SUCCESS CRITERIA
 
-Create a simple benchmark script.
+Phase 2 is complete when:
 
-The benchmark should test both models against the same prompts.
+- small files can be understood without unnecessary RAG overhead
+- DOCX/PDF/XLSX/CSV/TXT extraction works reliably
+- the application can connect to the target database
+- database access uses a read-only account
+- at least 3 approved database tools work
+- the model can select an appropriate database tool
+- tool arguments are validated
+- results are limited and normalized
+- permissions are checked before execution
+- database operations are audited
+- two laptops remain usable under the Phase 2 workload
+- benchmark results show model/node performance
+- no direct LLM-to-database connection exists
 
-Use categories such as:
+---
+
+# 43. Phase 2 Definition of Architecture
+
+The target architecture is:
 
 ```text
-1. summarization
-2. email drafting
-3. rewriting
-4. structured JSON
-5. basic reasoning
-6. spreadsheet formula explanation
-7. document extraction
-8. short business report
+                         Browser
+                            |
+                            v
+                    FastAPI Application
+                            |
+              +-------------+-------------+
+              |                           |
+              v                           v
+        File Pipeline                 AI Router
+              |                           |
+              v                 +---------+---------+
+        Extract / Normalize     |                   |
+              |                 v                   v
+              |          Ollama Node 1       Ollama Node 2
+              |          gemma4:e2b          qwen3.5:2b
+              |                 |                   |
+              +-----------------+-------------------+
+                                |
+                                v
+                         Tool Controller
+                                |
+                         +------+------+
+                         |             |
+                         v             v
+                    File tools     DB tools
+                                       |
+                                       v
+                                 Read-only DB
 ```
 
-Record:
+The central principle is:
 
 ```text
-model
-node
-prompt_id
-latency_ms
-output_length
-success/failure
-human_quality_score
+LLM decides what it wants.
+Python decides what is allowed.
+Database enforces read-only access.
 ```
 
-Human evaluation is required.
-
-Do not select the "best" model based only on tokens/second.
-
-A model that is slightly slower but produces much better office documents may be the better choice.
-
----
-
-## 18. Laptop Resource Policy
-
-Each 12 GB laptop is a constrained test node.
-
-Default policy:
-
-```text
-1 active generation
-1 model loaded
-moderate context
-moderate output length
-no background model switching
-no simultaneous large document indexing
-```
-
-If the laptop becomes unstable:
-
-1. reduce context size
-2. reduce output limit
-3. disable concurrency
-4. test CPU mode
-5. move heavy application/database tasks off the laptop
-
-Do not solve memory pressure by adding uncontrolled concurrency.
-
----
-
-## 19. Application vs Inference Responsibilities
-
-### Python application owns
-
-- authentication
-- authorization
-- conversations
-- users
-- file permissions
-- database access
-- tool validation
-- business rules
-- audit logs
-- model routing
-- request limits
-
-### Ollama owns
-
-- model loading
-- prompt execution
-- token generation
-- inference
-
-The model should not own business permissions.
-
----
-
-## 20. Future Scaling Contract
-
-The Phase 1 implementation must make this future architecture possible without rewriting chat logic:
-
-```text
-                    AI Router
-                       |
-          +------------+------------+
-          |            |            |
-       Ollama 1     Ollama 2     Ollama 3
-       GPU server   GPU server   GPU server
-```
-
-A future node should be added by configuration, for example:
-
-```env
-OLLAMA_NODE_3_URL=http://10.0.0.23:11434
-OLLAMA_NODE_3_MODEL=qwen3.5:9b
-OLLAMA_NODE_3_ENABLED=true
-```
-
-Do not build the router around assumptions that there are exactly two nodes.
-
----
-
-## 21. Testing Requirements
-
-Every Phase 1 change should preserve:
-
-### Unit tests
-
-- provider behavior
-- router selection
-- configuration validation
-- authentication
-- database repositories
-
-### Integration tests
-
-- API -> Ollama
-- API -> database
-- node unavailable
-- fallback behavior
-
-### Manual acceptance tests
-
-1. log in
-2. start conversation
-3. send prompt to qwen 3 1.7B
-4. send same prompt to Qwen 3.5 0.8B
-5. receive response
-6. verify message persistence
-7. restart an Ollama node
-8. verify useful failure/fallback behavior
-9. reconnect node
-10. verify health becomes healthy
-
----
-
-## 22. Developer Agent Instructions
-
-When modifying this repository:
-
-1. Read this `AGENTS.md` before making changes.
-2. Preserve the Phase 1 scope unless the user explicitly changes it.
-3. Prefer simple, testable modules.
-4. Do not introduce a new infrastructure dependency without a reason.
-5. Never hard-code model names, IPs, ports, credentials, or secrets.
-6. Keep model-specific code inside the AI provider layer.
-7. Never give the model unrestricted database access.
-8. Never expose Ollama directly to end users.
-9. Add or update tests with meaningful code changes.
-10. Keep APIs backward compatible when practical.
-11. Report assumptions and limitations in code comments or documentation.
-12. Do not silently change the benchmark configuration.
-13. Do not replace one model with another without recording the change.
-14. Prefer configuration over code changes for deployment differences.
-
----
-
-## 23. Coding Standards
-
-Use:
-
-- clear names
-- type hints
-- small functions
-- explicit error handling
-- structured logging
-- dependency injection where appropriate
-- environment-driven configuration
-
-Avoid:
-
-- giant route handlers
-- hidden network calls
-- hard-coded credentials
-- hard-coded laptop addresses
-- hidden retries
-- silent fallback between benchmark models
-- arbitrary SQL generated by the LLM
-
----
-
-## 24. Definition of Done for Phase 1
-
-Phase 1 is complete when:
-
-- two laptops can independently run their assigned Ollama model
-- the Python application can reach both nodes
-- a user can select or route to either model
-- chat responses are stored
-- users can see conversation history
-- node health is visible
-- a node outage produces a controlled result
-- model/node identity is captured for testing
-- basic authentication works
-- no secrets are committed
-- automated tests pass
-- the same application can later support more Ollama nodes through configuration
-
----
-
-## 25. Initial Commands
-
-Install and verify models on Laptop 1:
-
-```bash
-ollama pull qwen3:1.7b
-ollama list
-ollama run qwen3:1.7b
-```
-
-Install and verify models on Laptop 2:
-
-```bash
-ollama pull qwen3.5:0.8b
-ollama list
-ollama run qwen3.5:0.8b
-```
-
-Verify the Ollama API locally:
-
-```bash
-curl http://localhost:11434/api/tags
-```
-
-Then configure the Python application with the LAN addresses of the two laptops.
-
-Do not commit the actual `.env` file.
-
----
-
-## 26. First Implementation Order
-
-Implement in this order:
-
-```text
-1. project skeleton
-2. configuration system
-3. database/session layer
-4. user/authentication layer
-5. AIProvider interface
-6. OllamaProvider
-7. two-node router
-8. node health checks
-9. chat API
-10. conversation persistence
-11. basic web UI
-12. benchmark script
-13. tests
-14. local deployment documentation
-```
-
-Do not start document generation, RAG, or company database integration until this Phase 1 foundation is stable.
-
----
-
-## 27. Success Metric
-
-The goal of this phase is not maximum intelligence.
-
-The goal is to prove:
-
-> Two low-resource laptops can provide a reliable local AI service through one Python application, while keeping inference nodes replaceable and the application ready for future scale-out.
-
-Once this works, hardware can be upgraded independently of the application.
-
----
-
-## 28. Current Reference Links
-
-Ollama qwen 3 library:
-https://ollama.com/library/qwen3
-
-Ollama Qwen 3.5 library:
-https://ollama.com/library/qwen3.5
+That separation must remain intact as the project grows.

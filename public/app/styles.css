@@ -122,7 +122,10 @@ button {
 }
 
 .conv-list li {
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 12px;
   font-size: 14px;
   color: rgb(26 26 27 / 0.6);
   border-radius: var(--radius);
@@ -131,9 +134,6 @@ button {
   transition:
     background 0.15s ease,
     color 0.15s ease;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .conv-list li:hover {
@@ -144,6 +144,63 @@ button {
   background: rgb(45 51 107 / 0.05);
   color: var(--accent);
   border-left-color: var(--accent);
+}
+
+.conv-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 0;
+}
+
+.conv-delete {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: rgb(26 26 27 / 0.35);
+  background: transparent;
+  border: 1px solid transparent;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+  opacity: 0.7;
+}
+
+.conv-delete:hover {
+  background: rgb(176 39 24 / 0.08);
+  color: var(--neg);
+  border-color: rgb(176 39 24 / 0.15);
+}
+
+.conv-delete:active {
+  background: rgb(176 39 24 / 0.14);
+}
+
+.conv-delete:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+.conv-list li:hover .conv-delete,
+.conv-list li:focus-within .conv-delete {
+  opacity: 1;
+}
+
+.conv-list li.active .conv-delete {
+  color: rgb(45 51 107 / 0.5);
+}
+
+.conv-list li.active .conv-delete:hover {
+  color: var(--neg);
 }
 
 .systems {

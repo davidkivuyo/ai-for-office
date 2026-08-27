@@ -35,6 +35,7 @@ async function apiFetch(path, opts = {}) {
     err.body = body;
     throw err;
   }
+  if (res.status === 204) return null;
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return res.json();
   return res;
@@ -62,8 +63,8 @@ const api = {
   async createConversation(title) {
     return apiFetch("/api/conversations", { method: "POST", body: JSON.stringify({ title }) });
   },
-  async getConversation(id) {
-    return apiFetch(`/api/conversations/${id}`);
+  async getConversation(id, opts = {}) {
+    return apiFetch(`/api/conversations/${id}`, opts);
   },
   async sendMessage(conversationId, text, nodeId) {
     const body = { message: text, stream: false };
@@ -116,6 +117,9 @@ const api = {
     }
     return finalMeta;
   },
+  async deleteConversation(id) {
+    return apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
+  },
   async nodesHealth() {
     return apiFetch("/api/nodes/health");
   },
@@ -126,6 +130,8 @@ let conversations = [];
 let activeConversation = null;
 let messagesCache = []; // current conv messages
 let healthPoll = null;
+let loadMessagesGeneration = 0;
+let loadMessagesAbortController = null;
 
 const $ = (s) => document.querySelector(s);
 const stream = $("#stream");
@@ -145,16 +151,82 @@ function escapeHtml(str) {
 }
 
 /* ---------------- Rendering ---------------- */
+async function handleDeleteConversation(convId, convTitle) {
+  const title = convTitle || conversations.find((c) => c.id === convId)?.title || "this conversation";
+  if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return;
+  const isActiveDelete = activeConversation === convId;
+  if (isActiveDelete && loadMessagesAbortController) {
+    try {
+      loadMessagesAbortController.abort();
+    } catch (_) {}
+  }
+  try {
+    await api.deleteConversation(convId);
+    conversations = conversations.filter((c) => c.id !== convId);
+    if (isActiveDelete) {
+      if (conversations.length) {
+        activeConversation = conversations[0].id;
+        $("#project-title").textContent = conversations[0].title;
+        await loadMessages(activeConversation);
+      } else {
+        activeConversation = null;
+        $("#project-title").textContent = "No conversation";
+        clearStream();
+        loadMessagesAbortController = null;
+      }
+    }
+    renderConversations();
+  } catch (e) {
+    alert(`Could not delete conversation: ${e.message || e}`);
+  }
+}
+
 function renderConversations() {
   listEl.innerHTML = "";
   conversations.forEach((conv) => {
-    const li = el("li", conv.id === activeConversation ? "active" : "", escapeHtml(conv.title));
-    li.addEventListener("click", async () => {
+    const li = el("li");
+    if (conv.id === activeConversation) li.classList.add("active");
+    li.dataset.conversationId = conv.id;
+    li.tabIndex = 0;
+    li.setAttribute("role", "button");
+    li.setAttribute("aria-label", `Open conversation: ${conv.title}`);
+
+    const titleSpan = el("span", "conv-title");
+    titleSpan.textContent = conv.title;
+    titleSpan.title = conv.title;
+    const selectConversation = async () => {
       activeConversation = conv.id;
       $("#project-title").textContent = conv.title;
       renderConversations();
       await loadMessages(conv.id);
+    };
+    // selecting conversation — click on row or title
+    li.addEventListener("click", async (e) => {
+      if (e.target.closest(".conv-delete")) return;
+      await selectConversation();
     });
+    li.addEventListener("keydown", async (e) => {
+      if (e.target.closest(".conv-delete")) return;
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        await selectConversation();
+      }
+    });
+
+    const delBtn = el("button", "conv-delete");
+    delBtn.type = "button";
+    delBtn.dataset.conversationId = conv.id;
+    delBtn.setAttribute("aria-label", `Delete conversation: ${conv.title}`);
+    delBtn.setAttribute("title", "Delete conversation");
+    delBtn.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await handleDeleteConversation(conv.id, conv.title);
+    });
+
+    li.appendChild(titleSpan);
+    li.appendChild(delBtn);
     listEl.appendChild(li);
   });
 }
@@ -306,12 +378,23 @@ async function refreshConversations() {
   }
 }
 async function loadMessages(convId) {
+  const generation = ++loadMessagesGeneration;
+  if (loadMessagesAbortController) {
+    try {
+      loadMessagesAbortController.abort();
+    } catch (_) {}
+  }
+  const controller = new AbortController();
+  loadMessagesAbortController = controller;
   clearStream();
   try {
-    const data = await api.getConversation(convId);
+    const data = await api.getConversation(convId, { signal: controller.signal });
+    if (generation !== loadMessagesGeneration || convId !== activeConversation) return;
     messagesCache = data.messages || [];
     messagesCache.forEach((m) => renderMessage(m, { model: m.model, node_id: m.node_id, latency_ms: m.latency_ms }));
   } catch (e) {
+    if (e && e.name === "AbortError") return;
+    if (generation !== loadMessagesGeneration || convId !== activeConversation) return;
     renderMessage({ role: "assistant", content: `Could not load messages: ${e.message ?? ""}` });
   }
 }

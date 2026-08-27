@@ -1,3 +1,15 @@
+# Future plans
+
+* add a "stop" button to cancel a request in progress
+* add full stack register and authentication with JWT tokens, so that users can have their own conversations and history
+* add a "clear conversation" button to reset the chat history
+* add a "rename conversation" button to change the name of a conversation
+* add a "copy message" button to copy a message to the clipboard
+
+* Make the ai output not markdown, but instead a rich text output, so that it can be formatted and styled better
+
+-----
+
 On PC 2 (192.168.1.102), run this to configure Ollama to accept connections from other machines:
 
     # Set OLLAMA_HOST environment variable before starting Ollama
@@ -92,15 +104,3 @@ sudo firewall-cmd --list-ports
         "prompt": "Why is the sky blue?",
         "stream": false
       }'
-
-
-# Future plans
-
-* make the send button in the frontend disabled while a request is in progress, to prevent multiple requests being sent at once
-* add a "stop" button to cancel a request in progress
-* add a "clear conversation" button to reset the chat history
-* add a "delete conversation" button to remove a conversation from the list
-* add a "rename conversation" button to change the name of a conversation
-* add a "copy message" button to copy a message to the clipboard
-
-* Make the ai output not markdown, but instead a rich text output, so that it can be formatted and styled better
