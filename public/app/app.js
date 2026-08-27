@@ -190,6 +190,294 @@ function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
+function sanitizeUrl(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("vbscript:")) return null;
+  if (lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("mailto:")) return raw;
+  if (raw.startsWith("/") || raw.startsWith("#")) return raw;
+  // Block bare protocol-less or suspicious URLs containing spaces or control chars
+  if (/[\s<>]/.test(raw)) return null;
+  // Allow relative without protocol only if it looks like a path? treat as unsafe otherwise
+  return null;
+}
+
+function decodeHtml(str) {
+  return String(str ?? "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function restoreInlineCodes(str, inlineCodes) {
+  return str.replace(/\u0000IC(\d+)\u0000/g, (_, idx) => {
+    const code = inlineCodes[Number(idx)] ?? "";
+    return `<code>${escapeHtml(code)}</code>`;
+  });
+}
+
+function inlineFormat(escapedText, inlineCodes) {
+  let s = escapedText;
+  // Images: ![alt](url) — must run before link regex so ![alt](url) is not consumed as [alt](url)
+  s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (m, alt, url) => {
+    const decodedUrl = decodeHtml(url);
+    const safe = sanitizeUrl(decodedUrl);
+    if (!safe) return escapeHtml(decodeHtml(alt));
+    const decodedAlt = decodeHtml(alt);
+    return `<img src="${escapeHtml(safe)}" alt="${escapeHtml(decodedAlt)}" loading="lazy" />`;
+  });
+  // Links: [text](url)
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, txt, url) => {
+    const decodedUrl = decodeHtml(url);
+    const safe = sanitizeUrl(decodedUrl);
+    if (!safe) return txt;
+    return `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">${txt}</a>`;
+  });
+  // Autolink bare URLs (avoid already linked)
+  s = s.replace(/(?<!["'>=])\bhttps?:\/\/[^\s<]+/g, (url) => {
+    const decodedUrl = decodeHtml(url);
+    const safe = sanitizeUrl(decodedUrl);
+    if (!safe) return url;
+    return `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">${escapeHtml(safe)}</a>`;
+  });
+  // Bold **text** and __text__
+  s = s.replace(/\*\*([^\n*]+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/__([^\n_]+?)__/g, "<strong>$1</strong>");
+  // Strikethrough ~~text~~
+  s = s.replace(/~~([^\n~]+?)~~/g, "<del>$1</del>");
+  // Italic *text* and _text_  (after bold so single markers remain)
+  s = s.replace(/(?<!\*)\*([^\n*]+?)\*(?!\*)/g, "<em>$1</em>");
+  // Use _italic_ only when surrounded by word boundaries or spaces to avoid breaking words_with_underscores
+  s = s.replace(/(^|[^a-zA-Z0-9_])_([^\n_]+?)_([^a-zA-Z0-9_]|$)/g, (m, pre, content, post) => `${pre}<em>${content}</em>${post}`);
+  // Inline code placeholders -> <code>
+  s = restoreInlineCodes(s, inlineCodes);
+  return s;
+}
+
+function renderMarkdown(md) {
+  if (md == null) return "";
+  const raw = String(md);
+  if (!raw.trim()) return '<p class="rich-empty">—</p>';
+
+  const codeBlocks = [];
+  const inlineCodes = [];
+
+  // Extract fenced code blocks ```lang\ncode```  (must be before inline code)
+  let text = raw.replace(/```(\w*)\n?([\s\S]*?)```/g, (m, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push({ lang: (lang || "").trim().toLowerCase(), code: code });
+    return `\u0000CB${idx}\u0000`;
+  });
+
+  // Extract inline code `code`
+  text = text.replace(/`([^`\n]+?)`/g, (m, code) => {
+    const idx = inlineCodes.length;
+    inlineCodes.push(code);
+    return `\u0000IC${idx}\u0000`;
+  });
+
+  // Escape the remaining text (preserves \u0000 placeholders)
+  text = escapeHtml(text);
+
+  const lines = text.split("\n");
+  let html = "";
+  let i = 0;
+
+  const isHr = (l) => /^(---|\*\*\*|___)\s*$/.test(l.trim());
+  const isHeading = (l) => /^(#{1,6})\s+(.*)$/.exec(l);
+  const isUl = (l) => /^\s*[-*]\s+/.test(l);
+  const isOl = (l) => /^\s*\d+\.\s+/.test(l);
+  const isBlockquote = (l) => /^\s*(>|&gt;)\s?/.test(l);
+  const isTableRow = (l) => l.includes("|") && l.includes("\u0000") === false && l.trim().length > 0;
+  // Helper to detect table separator line like |---| --- | :---:
+  const isTableSep = (l) => /^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(l);
+
+  while (i < lines.length) {
+    let line = lines[i];
+
+    // Skip blank lines (they separate blocks)
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+
+    // Code block placeholder on its own line (could be inline with surrounding text? handle both)
+    if (line.includes("\u0000CB")) {
+      // If line is exactly a placeholder maybe with whitespace, restore as block
+      // For simplicity, replace all placeholders in line
+      const replaced = line.replace(/\u0000CB(\d+)\u0000/g, (_, idx) => {
+        const cb = codeBlocks[Number(idx)];
+        const escCode = escapeHtml(cb.code);
+        const langCls = cb.lang ? ` class="language-${escapeHtml(cb.lang)}"` : "";
+        const langLabel = cb.lang ? `<span class="code-lang">${escapeHtml(cb.lang)}</span>` : "";
+        return `</p><pre><code${langCls}>${escCode}</code></pre><p>`;
+        // We abuse p wrapping; will be cleaned. Instead emit directly:
+      });
+      // If the placeholder was the whole line, emit pre directly without p wrapper
+      // Detect if line.trim() is exactly the placeholder
+      if (/^\s*\u0000CB\d+\u0000\s*$/.test(line)) {
+        const idx = Number(line.match(/\u0000CB(\d+)\u0000/)[1]);
+        const cb = codeBlocks[idx];
+        const escCode = escapeHtml(cb.code);
+        const langCls = cb.lang ? ` class="language-${escapeHtml(cb.lang)}"` : "";
+        const langLabel = cb.lang ? `<div class="code-head">${escapeHtml(cb.lang)}</div>` : "";
+        html += `${langLabel}<pre><code${langCls}>${escCode}</code></pre>`;
+      } else {
+        // Inline-like code block inside paragraph — restore inline and treat as paragraph
+        const inner = replaced.replace(/<\/p><pre>.*?<\/pre><p>/g, (m) => {
+          // Extract the pre part
+          return m.slice(4, -3);
+        });
+        // Fallback: just restore with pre tags inline (will be inside p)
+        const restored = line.replace(/\u0000CB(\d+)\u0000/g, (_, idx) => {
+          const cb = codeBlocks[Number(idx)];
+          return `<pre><code>${escapeHtml(cb.code)}</code></pre>`;
+        });
+        const formatted = inlineFormat(restored, inlineCodes);
+        html += `<p>${formatted}</p>`;
+      }
+      i++;
+      continue;
+    }
+
+    // Heading
+    const hm = isHeading(line);
+    if (hm) {
+      const level = hm[1].length;
+      const content = inlineFormat(hm[2].trim(), inlineCodes);
+      html += `<h${level}>${content}</h${level}>`;
+      i++;
+      continue;
+    }
+
+    if (isHr(line)) {
+      html += "<hr />";
+      i++;
+      continue;
+    }
+
+    // Table: header row followed by separator
+    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const headerCells = line.split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+      const sepLine = lines[i + 1];
+      // Determine alignment from sep cells
+      const aligns = sepLine.split("|").map((c) => c.trim()).filter((c) => c.length > 0).map((c) => {
+        if (c.startsWith(":") && c.endsWith(":")) return "center";
+        if (c.endsWith(":")) return "right";
+        if (c.startsWith(":")) return "left";
+        return "";
+      });
+      let tableHtml = '<div class="data-table rich-table"><table><thead><tr>';
+      headerCells.forEach((c, idx) => {
+        const al = aligns[idx] ? ` style="text-align:${aligns[idx]}"` : "";
+        tableHtml += `<th${al}>${inlineFormat(c, inlineCodes)}</th>`;
+      });
+      tableHtml += "</tr></thead><tbody>";
+      i += 2;
+      while (i < lines.length && isTableRow(lines[i]) && lines[i].trim() && !isTableSep(lines[i])) {
+        const cells = lines[i].split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+        // If row has fewer cells than header, pad; if more, truncate
+        tableHtml += "<tr>";
+        for (let ci = 0; ci < headerCells.length; ci++) {
+          const cell = cells[ci] != null ? cells[ci] : "";
+          const al = aligns[ci] ? ` style="text-align:${aligns[ci]}"` : "";
+          tableHtml += `<td${al}>${inlineFormat(cell, inlineCodes)}</td>`;
+        }
+        tableHtml += "</tr>";
+        i++;
+      }
+      tableHtml += "</tbody></table></div>";
+      html += tableHtml;
+      continue;
+    }
+
+    // Blockquote: collect consecutive > lines (escaped as &gt;)
+    if (isBlockquote(line)) {
+      const bqLines = [];
+      while (i < lines.length && isBlockquote(lines[i])) {
+        bqLines.push(lines[i].replace(/^\s*(?:&gt;\s?|>\s?)/, ""));
+        i++;
+      }
+      const innerRaw = bqLines.join("\n");
+      // Recursively render inner as markdown without code-block double-processing? For blockquote we allow inline + paragraphs
+      // Simple: join with <br> and inlineFormat
+      // If inner contains blank line, split into paragraphs
+      const innerParas = innerRaw.split(/\n\s*\n/).map((para) => {
+        const paraOneLine = para.replace(/\n/g, "<br />");
+        return inlineFormat(paraOneLine, inlineCodes);
+      });
+      html += `<blockquote>${innerParas.map((p) => `<p>${p}</p>`).join("")}</blockquote>`;
+      continue;
+    }
+
+    // Unordered list
+    if (isUl(line)) {
+      html += "<ul>";
+      while (i < lines.length && isUl(lines[i])) {
+        const item = lines[i].replace(/^\s*[-*]\s+/, "");
+        html += `<li>${inlineFormat(item, inlineCodes)}</li>`;
+        i++;
+      }
+      html += "</ul>";
+      continue;
+    }
+
+    // Ordered list
+    if (isOl(line)) {
+      html += "<ol>";
+      while (i < lines.length && isOl(lines[i])) {
+        const item = lines[i].replace(/^\s*\d+\.\s+/, "");
+        html += `<li>${inlineFormat(item, inlineCodes)}</li>`;
+        i++;
+      }
+      html += "</ol>";
+      continue;
+    }
+
+    // Paragraph: collect consecutive lines that are not any other block starter
+    const paraLines = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !isHeading(lines[i]) &&
+      !isHr(lines[i]) &&
+      !isUl(lines[i]) &&
+      !isOl(lines[i]) &&
+      !isBlockquote(lines[i]) &&
+      !lines[i].includes("\u0000CB") &&
+      !(isTableRow(lines[i]) && i + 1 < lines.length && isTableSep(lines[i + 1]))
+    ) {
+      paraLines.push(lines[i]);
+      i++;
+      // Break if next line is blank (paragraph boundary)
+      if (i < lines.length && !lines[i].trim()) break;
+    }
+    if (paraLines.length) {
+      // Join paragraph lines: single newline => <br />, we keep soft breaks as spaces unless double
+      // Preserve line breaks inside paragraph as <br />
+      const paraText = paraLines.join("\n");
+      // If paraText contains a newline, treat as line break
+      const withBreaks = paraText.split("\n").map((l) => inlineFormat(l, inlineCodes)).join("<br />");
+      html += `<p>${withBreaks}</p>`;
+    } else {
+      i++;
+    }
+  }
+
+  // Final sanitize: ensure no leftover placeholders
+  html = html.replace(/\u0000CB\d+\u0000/g, "");
+  html = html.replace(/\u0000IC\d+\u0000/g, (m) => {
+    // Should have been replaced in inlineFormat, but fallback
+    const idx = Number(m.match(/\d+/)[0]);
+    return `<code>${escapeHtml(inlineCodes[idx] || "")}</code>`;
+  });
+
+  return html;
+}
+
 /* ---------------- Rendering ---------------- */
 async function handleDeleteConversation(convId, convTitle) {
   const title = convTitle || conversations.find((c) => c.id === convId)?.title || "this conversation";
@@ -332,14 +620,42 @@ function renderMessage(msg, meta, isTyping) {
   if (msg.role === "assistant") {
     wrapper.appendChild(el("div", "msg-mark"));
     const body = el("div", "msg-body");
-    const p = el("p");
     const content = msg.content || msg.text || "";
     if (isTyping) {
+      const p = el("p");
       p.innerHTML = content;
+      body.appendChild(p);
     } else {
-      p.textContent = content;
+      const rich = el("div", "rich-text");
+      rich.innerHTML = renderMarkdown(content);
+      // toolbar: copy button
+      const toolbar = el("div", "rich-toolbar");
+      const copyBtn = el("button", "rich-copy");
+      copyBtn.type = "button";
+      copyBtn.textContent = "Copy";
+      copyBtn.setAttribute("aria-label", "Copy message");
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(content);
+          const prev = copyBtn.textContent;
+          copyBtn.textContent = "Copied!";
+          setTimeout(() => (copyBtn.textContent = prev), 1200);
+        } catch (_) {
+          // fallback: select
+          const ta = document.createElement("textarea");
+          ta.value = content;
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); } catch (_) {}
+          ta.remove();
+          copyBtn.textContent = "Copied!";
+          setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+        }
+      });
+      body.appendChild(rich);
+      body.appendChild(toolbar);
+      toolbar.appendChild(copyBtn);
     }
-    body.appendChild(p);
     if (meta) {
       const m = el("div", "msg-meta");
       m.textContent = `${meta.actual_model || meta.model || ""} · ${meta.node_id || meta.actual_node || ""} · ${meta.latency_ms ? meta.latency_ms + "ms" : ""}`;
@@ -554,16 +870,60 @@ async function submit(rawText) {
 
   try {
     if (useStream) {
-      // Streaming: replace pending with live token accumulation
-      const bodyEl = pending.querySelector(".msg-body p");
-      bodyEl.textContent = "";
+      // Streaming: replace pending with live rich-text accumulation (throttled)
+      const bodyP = pending.querySelector(".msg-body p");
+      // Convert typing <p> into rich-text container for incremental rendering
+      let bodyEl = bodyP;
+      if (bodyP) {
+        bodyP.className = "rich-text";
+        bodyP.innerHTML = "";
+        bodyEl = bodyP;
+      } else {
+        bodyEl = pending.querySelector(".msg-body .rich-text") || pending.querySelector(".msg-body");
+      }
       let full = "";
+      let latestFull = "";
+      let rafId = null;
+      let scheduled = false;
+      const flushRender = () => {
+        if (myGen !== chatGeneration) return;
+        bodyEl.innerHTML = renderMarkdown(latestFull);
+        stream.scrollTop = stream.scrollHeight;
+      };
+      const scheduleRender = () => {
+        if (scheduled) return;
+        scheduled = true;
+        const cb = () => {
+          scheduled = false;
+          rafId = null;
+          flushRender();
+        };
+        if (typeof requestAnimationFrame === "function") {
+          rafId = requestAnimationFrame(cb);
+        } else {
+          rafId = setTimeout(cb, 32);
+        }
+      };
+      const cancelScheduled = () => {
+        if (rafId != null) {
+          if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(rafId);
+          else clearTimeout(rafId);
+          rafId = null;
+          scheduled = false;
+        }
+      };
       const meta = await api.sendMessageStream(requestConvId, text, nodeId, (tok) => {
         if (myGen !== chatGeneration) return;
         full += tok;
-        bodyEl.textContent = full;
-        stream.scrollTop = stream.scrollHeight;
+        latestFull = full;
+        scheduleRender();
       }, { signal: controller.signal });
+      // Force one final render so the complete response is displayed
+      cancelScheduled();
+      if (myGen === chatGeneration) {
+        latestFull = full;
+        flushRender();
+      }
       if (myGen !== chatGeneration || controller.signal.aborted) {
         try { pending.remove(); } catch (_) {}
         return;
