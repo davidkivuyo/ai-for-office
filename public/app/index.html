@@ -119,7 +119,10 @@
               </div>
               <div class="composer-tools">
                 <label class="tool" style="cursor: pointer"><input type="checkbox" id="stream-toggle" /> Stream</label>
+                <button type="button" class="btn-ghost" id="attach-btn" title="Attach file (.txt, .md, .csv, .xlsx, .docx, .pdf)" style="padding:6px 10px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">📎 Attach file</button>
+                <input type="file" id="file-input" hidden accept=".txt,.md,.csv,.xlsx,.docx,.pdf" multiple />
                 <span class="tool" id="latency-hint"></span>
+                <span class="tool" id="file-hint" style="display:none"></span>
               </div>
             </div>
           </section>

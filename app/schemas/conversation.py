@@ -32,6 +32,7 @@ class MessageOut(BaseModel):
     node_id: str | None = None
     latency_ms: int | None = None
     created_at: datetime
+    files: list[str] | None = None
 
     model_config = {"from_attributes": True}
 

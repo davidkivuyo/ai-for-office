@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     ai_max_context_tokens: int = Field(default=8192, alias="AI_MAX_CONTEXT_TOKENS")
     ai_max_concurrent_requests_per_node: int = Field(default=1, alias="AI_MAX_CONCURRENT_REQUESTS_PER_NODE")
     ai_fallback_enabled: bool = Field(default=True, alias="AI_FALLBACK_ENABLED")
+    # Phase 2A: conservative context per AGENTS §9, plus file thresholds per §8
+    ai_num_ctx: int = Field(default=4096, alias="AI_NUM_CTX")
+    # File pipeline — token thresholds per §8 (starting values, benchmark later)
+    file_small_token_threshold: int = Field(default=4000, alias="FILE_SMALL_TOKEN_THRESHOLD")
+    file_medium_token_threshold: int = Field(default=12000, alias="FILE_MEDIUM_TOKEN_THRESHOLD")
+    file_max_size_bytes: int = Field(default=10 * 1024 * 1024, alias="FILE_MAX_SIZE_BYTES")  # 10MB default for small office files
+    file_max_text_preview_chars: int = Field(default=12000, alias="FILE_MAX_TEXT_PREVIEW_CHARS")
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     log_sensitive_content: bool = Field(default=False, alias="LOG_SENSITIVE_CONTENT")

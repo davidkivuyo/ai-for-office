@@ -66,8 +66,20 @@ async def create_message(
     model: str | None = None,
     node_id: str | None = None,
     latency_ms: int | None = None,
+    files: list[str] | None = None,
 ) -> Message:
-    msg = Message(conversation_id=conversation_id, role=role, content=content, model=model, node_id=node_id, latency_ms=latency_ms)
+    import json as _json
+
+    attached = _json.dumps(files) if files else None
+    msg = Message(
+        conversation_id=conversation_id,
+        role=role,
+        content=content,
+        model=model,
+        node_id=node_id,
+        latency_ms=latency_ms,
+        attached_files_json=attached,
+    )
     db.add(msg)
     await db.flush()
     return msg

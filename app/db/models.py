@@ -28,6 +28,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     conversations: Mapped[list[Conversation]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    uploaded_files: Mapped[list[UploadedFile]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Conversation(Base):
@@ -59,8 +60,48 @@ class Message(Base):
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     finish_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    # Phase 2A: persist attached file filenames for reload rendering (msg.files)
+    attached_files_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
+    @property
+    def files(self) -> list[str] | None:  # type: ignore[override]
+        if not self.attached_files_json:
+            return None
+        import json as _json
+
+        try:
+            data = _json.loads(self.attached_files_json)
+            if isinstance(data, list):
+                return [str(x) for x in data]
+            return None
+        except Exception:
+            return None
+
 
 Index("ix_messages_conversation_created", Message.conversation_id, Message.created_at)
+
+
+class UploadedFile(Base):
+    """Persisted file extraction per Phase 2A — stores normalized DocumentContent."""
+
+    __tablename__ = "uploaded_files"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True)
+    filename: Mapped[str] = mapped_column(String(256), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Normalized content — stored as JSON/text for lightweight retrieval
+    content_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    content_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")  # JSON dump of DocumentContent
+    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    size_category: Mapped[str] = mapped_column(String(16), nullable=False, default="small")
+    pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # original byte size for audit
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="uploaded_files")
+    conversation: Mapped[Conversation | None] = relationship()

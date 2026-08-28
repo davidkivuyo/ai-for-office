@@ -43,6 +43,8 @@ class OllamaProvider:
             ollama_opts["temperature"] = options["temperature"]
         if "num_predict" in options and options["num_predict"] is not None:
             ollama_opts["num_predict"] = options["num_predict"]
+        if "num_ctx" in options and options["num_ctx"] is not None:
+            ollama_opts["num_ctx"] = options["num_ctx"]
         # Disable Qwen3 extended thinking mode by default.
         # Qwen3 models output a <think>...</think> block before their answer which
         # consumes the token budget and returns empty content when the budget runs out.

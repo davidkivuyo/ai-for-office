@@ -66,16 +66,42 @@ const api = {
   async getConversation(id, opts = {}) {
     return apiFetch(`/api/conversations/${id}`, opts);
   },
+  async uploadFile(file, conversationId) {
+    const form = new FormData();
+    form.append("file", file);
+    if (conversationId) form.append("conversation_id", conversationId);
+    const res = await fetch(`${API_BASE}/api/files/upload`, {
+      method: "POST",
+      headers: { ...authHeaders() },
+      body: form,
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      let msg = t;
+      try { const j = JSON.parse(t); msg = j.detail || t; } catch (_) {}
+      throw new Error(msg);
+    }
+    return res.json();
+  },
   async sendMessage(conversationId, text, nodeId, opts = {}) {
+    // opts may contain fileIds (Phase 2A) and signal; handle legacy 4-arg fileIds array
+    let fileIds = opts.fileIds || opts.file_ids || null;
+    // legacy: if caller passed fileIds as 4th arg array instead of opts
+    if (Array.isArray(opts) || (opts && Array.isArray(opts.fileIds))) {
+      fileIds = Array.isArray(opts) ? opts : opts.fileIds;
+    }
     const body = { message: text, stream: false };
     if (conversationId) body.conversation_id = conversationId;
     if (nodeId) body.node_id = nodeId;
+    if (fileIds && fileIds.length) body.file_ids = fileIds;
     return apiFetch("/api/chat", { method: "POST", body: JSON.stringify(body), signal: opts.signal });
   },
   async sendMessageStream(conversationId, text, nodeId, onToken, opts = {}) {
+    let fileIds = opts.fileIds || opts.file_ids || null;
     const body = { message: text, stream: true };
     if (conversationId) body.conversation_id = conversationId;
     if (nodeId) body.node_id = nodeId;
+    if (fileIds && fileIds.length) body.file_ids = fileIds;
     const res = await fetch(`${API_BASE}/api/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -139,6 +165,8 @@ let loadMessagesAbortController = null;
 let chatAbortController = null;
 let isSending = false;
 let chatGeneration = 0;
+// Phase 2A: pending files for next message
+let pendingFiles = []; // {file_id, filename, file_type, token_estimate, size_category}
 
 function abortCurrentChat() {
   if (chatAbortController) {
@@ -667,6 +695,18 @@ function renderMessage(msg, meta, isTyping) {
     const p = el("p");
     p.textContent = msg.content || msg.text || "";
     bubble.appendChild(p);
+    // Show attached files if present (Phase 2A)
+    const files = msg.files || msg.file_ids || [];
+    if (files && files.length) {
+      const flist = el("div", "bubble-files");
+      files.forEach((fname) => {
+        const chip = el("div", "file-card");
+        chip.style.cssText = "margin-top:8px; padding:6px 8px; width:auto; display:inline-flex;";
+        chip.textContent = typeof fname === "string" ? fname : (fname.filename || fname.file_id || "file");
+        flist.appendChild(chip);
+      });
+      bubble.appendChild(flist);
+    }
     wrapper.appendChild(bubble);
   }
   stream.appendChild(wrapper);
@@ -849,6 +889,83 @@ function stopHealthPoll() {
 $("#node-health-btn")?.addEventListener("click", refreshNodes);
 
 /* ---------------- Compose ---------------- */
+/* ---------------- File attachments (Phase 2A) ---------------- */
+function renderPendingFiles() {
+  const c = $("#attachments");
+  if (!c) return;
+  c.innerHTML = "";
+  pendingFiles.forEach((f, idx) => {
+    const chip = el("div", "attachment");
+    const label = el("span");
+    label.textContent = `${f.filename} · ${f.token_estimate} tokens · ${f.size_category}`;
+    label.title = `${f.filename} (${f.file_type})`;
+    const rm = el("button", "");
+    rm.type = "button";
+    rm.textContent = "×";
+    rm.title = "Remove";
+    rm.setAttribute("aria-label", `Remove ${f.filename}`);
+    rm.addEventListener("click", () => {
+      pendingFiles.splice(idx, 1);
+      renderPendingFiles();
+      updateFileHint();
+    });
+    chip.appendChild(label);
+    chip.appendChild(rm);
+    c.appendChild(chip);
+  });
+}
+
+function updateFileHint() {
+  const hint = $("#file-hint");
+  if (!hint) return;
+  if (pendingFiles.length) {
+    hint.textContent = `${pendingFiles.length} file(s) attached`;
+    hint.style.display = "";
+  } else {
+    hint.textContent = "";
+    hint.style.display = "none";
+  }
+}
+
+async function handleFilesSelected(fileList) {
+  const hint = $("#file-hint");
+  if (pendingFiles.length >= 5) {
+    alert("Maximum 5 files attached. Remove a file before adding more.");
+    const inp2 = $("#file-input");
+    if (inp2) inp2.value = "";
+    return;
+  }
+  const maxFiles = 5 - pendingFiles.length;
+  const files = Array.from(fileList).slice(0, maxFiles);
+  for (const file of files) {
+    // quick client validation
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    const allowed = ["txt","md","csv","xlsx","docx","pdf"];
+    if (!allowed.includes(ext)) {
+      alert(`Unsupported file type: ${file.name}. Allowed: ${allowed.join(", ")}`);
+      continue;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert(`File too large: ${file.name} (${file.size} bytes). Max 10MB.`);
+      continue;
+    }
+    try {
+      if (hint) { hint.textContent = `Uploading ${file.name}…`; hint.style.display = ""; }
+      const res = await api.uploadFile(file, activeConversation);
+      pendingFiles.push({ file_id: res.file_id, filename: res.filename, file_type: res.file_type, token_estimate: res.token_estimate, size_category: res.size_category });
+      renderPendingFiles();
+      updateFileHint();
+    } catch (e) {
+      alert(`Failed to upload ${file.name}: ${e.message}`);
+      if (hint) hint.textContent = "";
+    }
+  }
+  // clear input
+  const inp = $("#file-input");
+  if (inp) inp.value = "";
+  if (!pendingFiles.length && hint) { hint.textContent = ""; hint.style.display = "none"; }
+}
+
 async function submit(rawText) {
   if (isSending) return;
   const text = (rawText ?? inputEl.value).trim();
@@ -856,8 +973,15 @@ async function submit(rawText) {
   const nodeId = $("#node-select")?.value || null;
   const useStream = $("#stream-toggle")?.checked;
   const requestConvId = activeConversation;
-  renderMessage({ role: "user", content: text });
+  const fileIds = pendingFiles.map(f => f.file_id);
+  // capture file names for user bubble
+  const attachedNames = pendingFiles.map(f => f.filename);
+  renderMessage({ role: "user", content: text, files: attachedNames });
   inputEl.value = "";
+  // Clear pending files for next turn (keep fileIds for this request)
+  pendingFiles = [];
+  renderPendingFiles();
+  updateFileHint();
   // Optimistically show context-aware title for new or generic conversations
   if (!requestConvId || isGenericTitle(conversations.find((c) => c.id === requestConvId)?.title || "")) {
     $("#project-title").textContent = deriveTitleFromMessage(text);
@@ -917,7 +1041,7 @@ async function submit(rawText) {
         full += tok;
         latestFull = full;
         scheduleRender();
-      }, { signal: controller.signal });
+      }, { signal: controller.signal, fileIds });
       // Force one final render so the complete response is displayed
       cancelScheduled();
       if (myGen === chatGeneration) {
@@ -944,7 +1068,7 @@ async function submit(rawText) {
         if (updated) $("#project-title").textContent = updated.title;
       }
     } else {
-      const res = await api.sendMessage(requestConvId, text, nodeId, { signal: controller.signal });
+      const res = await api.sendMessage(requestConvId, text, nodeId, { signal: controller.signal, fileIds });
       if (myGen !== chatGeneration || controller.signal.aborted) {
         try { pending.remove(); } catch (_) {}
         return;
@@ -1007,6 +1131,24 @@ function initCompose() {
     clearStream();
     renderConversations();
     inputEl?.focus();
+  });
+  // File attachments (Phase 2A)
+  const fileInput = $("#file-input");
+  const attachBtn = $("#attach-btn");
+  attachBtn?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", async (e) => {
+    const files = e.target.files;
+    if (files && files.length) await handleFilesSelected(files);
+  });
+  // Drag & drop on composer
+  const composer = document.querySelector(".composer");
+  composer?.addEventListener("dragover", (e) => { e.preventDefault(); composer.classList.add("drag-over"); });
+  composer?.addEventListener("dragleave", () => composer.classList.remove("drag-over"));
+  composer?.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    composer.classList.remove("drag-over");
+    const files = e.dataTransfer?.files;
+    if (files && files.length) await handleFilesSelected(files);
   });
 }
 

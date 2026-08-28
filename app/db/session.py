@@ -143,6 +143,13 @@ async def init_db(app=None) -> None:
     """Create all tables — for Phase 1 we use create_all; Alembic can be added later."""
     from app.db import models  # noqa: F401 — ensure models imported
 
+    async def _ensure_phase2a_columns(conn) -> None:
+        # Phase 2A: add attached_files_json to messages if missing (handles existing nexus.db)
+        try:
+            await conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN attached_files_json TEXT")
+        except Exception:
+            pass  # already exists or not needed (e.g., fresh DB)
+
     if app is not None:
         # Per-app engine — owned by app lifecycle (disposed via lifespan/reset_engine)
         if hasattr(app.state, "engine"):
@@ -151,11 +158,13 @@ async def init_db(app=None) -> None:
             engine = get_engine(app)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await _ensure_phase2a_columns(conn)
         return
     # No app — explicitly owned ephemeral engine with guaranteed disposal
     async with ephemeral_engine() as engine:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await _ensure_phase2a_columns(conn)
 
 
 async def reset_engine(app: FastAPI | None = None) -> None:

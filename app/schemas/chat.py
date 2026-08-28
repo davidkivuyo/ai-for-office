@@ -26,6 +26,24 @@ class ChatRequest(BaseModel):
     )
     stream: bool = Field(default=False)
     temperature: float | None = Field(default=None, ge=0, le=2)
+    # Phase 2A: file context — list of uploaded file ids to include in this turn
+    file_ids: list[str] | None = Field(default=None, description="Uploaded file ids to include as document context")
+
+
+    @field_validator("file_ids")
+    @classmethod
+    def _validate_file_ids(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        if len(v) > 5:
+            raise ValueError("Too many files (max 5 per message)")
+        import re
+
+        pat = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+        for fid in v:
+            if not pat.match(fid):
+                raise ValueError(f"Invalid file_id {fid!r}")
+        return v
 
 
 class ChatResponse(BaseModel):

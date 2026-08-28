@@ -837,6 +837,20 @@ button {
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.composer.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  border-radius: 8px;
+}
+
+.bubble-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .tool {
