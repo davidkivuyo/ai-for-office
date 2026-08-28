@@ -16,6 +16,7 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -e ".[dev]"
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
 see [GUIDES.md](docs/GUIDE.md)
 
