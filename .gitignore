@@ -61,3 +61,4 @@ python-db/
 *.bqrs
 *.sarif
 codeql-prompts/
+codeql_prompts/
