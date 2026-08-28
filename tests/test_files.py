@@ -1,12 +1,11 @@
 import io
-import uuid
+
 
 import pytest
-import pytest_asyncio
+
 
 from app.files.extractor import extract_document, detect_file_type
 from app.files.tokens import estimate_tokens, categorize_size
-from app.files.chunking import chunk_document, select_relevant_chunks, chunk_text
 from app.files.models import DocumentContent, DocumentTable
 from app.files.prompts import format_document_for_llm, build_file_messages
 from app.files.service import prepare_file_context

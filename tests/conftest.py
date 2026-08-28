@@ -19,8 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import clear_settings_cache
-from app.db.session import Base
-import app.db.models  # noqa: F401  # ensure all tables registered (Phase 2A)
+from app.db.session import Base  # noqa: F401  # ensure all tables registered (Phase 2A)
 from app.main import create_app
 
 

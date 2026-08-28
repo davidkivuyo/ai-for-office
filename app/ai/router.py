@@ -284,6 +284,7 @@ class AIRouter:
             if provider is not None and hasattr(provider, "truncate_messages"):
                 return provider.truncate_messages(messages, budget_tokens, model=target_model)  # type: ignore[no-untyped-call]
         except Exception:
+            # Provider-specific truncation failed, fall back to character heuristic below
             pass
         # Fallback: char heuristic preserving newest
         budget_chars = budget_tokens * 4

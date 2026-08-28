@@ -17,7 +17,6 @@ class AIProvider(Protocol):
         **options,
     ) -> AsyncIterator[str]:
         """Yield response tokens/chunks. Caller joins them for non-streaming."""
-        ...
 
     async def chat_blocking(
         self,
@@ -28,11 +27,9 @@ class AIProvider(Protocol):
         **options,
     ) -> str:
         """Convenience helper — collect streamed chunks."""
-        ...
 
     def estimate_tokens(self, text: str, model: str | None = None) -> int:
         """Model-specific token estimate — provider owns counting."""
-        ...
 
     def truncate_messages(
         self,
@@ -41,4 +38,3 @@ class AIProvider(Protocol):
         model: str | None = None,
     ) -> list[dict[str, str]]:
         """Model-specific context truncation — preserves newest user message when dropping older history."""
-        ...

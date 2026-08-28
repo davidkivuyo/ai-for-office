@@ -9,9 +9,8 @@ from sqlalchemy import select
 from app.config import Settings
 from app.db.models import UploadedFile
 from app.files.chunking import select_relevant_chunks, chunk_document
-from app.files.extractor import extract_document, detect_file_type, SUPPORTED_TYPES_STR
+from app.files.extractor import extract_document, detect_file_type
 from app.files.models import DocumentContent
-from app.files.prompts import build_file_messages, build_chat_with_files_messages, format_document_for_llm
 
 
 # Max file size guard

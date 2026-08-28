@@ -1,4 +1,4 @@
-# Nexus.ai — Office AI Test Environment (Phase 1)
+# Nexus.ai — Office AI Test Environment
 
 Local, low-cost AI for office workers: chat with on-prem Ollama, store conversations, and keep the inference layer replaceable.
 

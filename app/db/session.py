@@ -5,20 +5,16 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
+from app.db.base import Base
 
 # Process-scoped engine for callers without an explicit FastAPI app.
 # Reused across calls to avoid creating unmanaged pooled engines repeatedly;
 # explicitly disposed via shutdown_process_engine() or ephemeral context.
 _process_engine: AsyncEngine | None = None
 _process_session_factory: async_sessionmaker[AsyncSession] | None = None
-
-
-class Base(DeclarativeBase):
-    pass
 
 
 def _create_engine_for_app(app) -> AsyncEngine:
@@ -141,7 +137,9 @@ async def get_db(request: Request):
 
 async def init_db(app=None) -> None:
     """Create all tables — for Phase 1 we use create_all; Alembic can be added later."""
-    from app.db import models  # noqa: F401 — ensure models imported
+    import importlib
+
+    importlib.import_module("app.db.models")  # ensure models imported for Base.metadata
 
     async def _ensure_phase2a_columns(conn) -> None:
         # Phase 2A: add attached_files_json to messages if missing (handles existing nexus.db)

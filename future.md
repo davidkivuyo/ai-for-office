@@ -1,9 +1,13 @@
 # Future plans
 
+* create a docs folder to holds the documents
 * add full stack register and authentication with JWT tokens, so that users can have their own conversations and history
-* make a way to delete the uploaded file either via the delete conversation alongside the file used in it or a storage area showing all the uploaded files and option to delete them. Reference the modern implementation of approach used by chatgpt file storage or claudeai artifacts.
+* add a model choose according to installed models in the machine with that ip address. restrict one model used per user session so that a user cannot use one model on one conversation and other on another conversation from the same machine hosting the models
 
 -----
+codeql database create python-db --language=python --source-root=.
+
+codeql database analyze python-db /home/davidkivuyo/StudioProjects/codeql-linux64/codeql-repo/python/ql/src/codeql-suites/python-security-and-quality.qls --format=sarif-latest --output=results.sarif
 
 On PC 2 (192.168.1.102), run this to configure Ollama to accept connections from other machines:
 

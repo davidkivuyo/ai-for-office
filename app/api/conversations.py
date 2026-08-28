@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.permissions import get_current_user
-from app.db.models import User
+from app.db.models import UploadedFile, User
 from app.db.repositories import create_conversation, get_conversation, list_conversations, list_messages, update_conversation_title
 from app.db.session import get_db
 from app.schemas.conversation import ConversationCreate, ConversationOut, ConversationUpdate, ConversationWithMessages
@@ -65,6 +66,11 @@ async def delete_conv(conversation_id: str, current: User = Depends(get_current_
     conv = await get_conversation(db, conversation_id, current.id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    # Phase 2A: cascade delete files linked to this conversation (ChatGPT/Claude artifacts behavior)
+    result = await db.execute(select(UploadedFile).where(UploadedFile.conversation_id == conv.id, UploadedFile.user_id == current.id))
+    files = result.scalars().all()
+    for f in files:
+        await db.delete(f)
     await db.delete(conv)
     await db.commit()
     return None

@@ -33,7 +33,6 @@ def format_document_for_llm(
 
     # Overall budget across table rows, section content, and document text
     # Metadata lines above are always included; budget applies to content below
-    remaining = max_total_chars
     truncated = False
 
     def _remaining_chars() -> int:
@@ -42,7 +41,7 @@ def format_document_for_llm(
         return max(0, max_total_chars - used)
 
     def _append_with_budget(text: str, *, is_metadata: bool = False) -> bool:
-        nonlocal remaining, truncated
+        nonlocal truncated
         # Metadata lines (DOCUMENT METADATA, TABLE header) are small; still count but allow
         # For content rows/sections/text, enforce budget
         if is_metadata:

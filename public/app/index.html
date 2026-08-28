@@ -15,7 +15,7 @@
     />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <link rel="icon" href="../favicon.ico"/>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -69,6 +69,12 @@
             <div class="systems" id="node-status">
               <div class="system" data-node="node1"><span class="dot" id="dot-node1"></span><span id="label-node1">Node 1 — loading…</span></div>
               <div class="system" data-node="node2"><span class="dot" id="dot-node2"></span><span id="label-node2">Node 2 — loading…</span></div>
+            </div>
+            <h3 class="rail-label" style="margin-top:24px; display:flex; align-items:center; justify-content:space-between;">Storage <button type="button" id="storage-refresh" class="btn-ghost" style="padding:2px 6px; font-size:10px;">↻</button></h3>
+            <div class="storage" id="storage">
+              <div class="storage-meta" id="storage-meta" style="font-size:11px; color: rgb(26 26 27 / 0.5); margin-bottom:8px;">—</div>
+              <ul class="storage-list" id="storage-list" style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;"></ul>
+              <div class="storage-empty" id="storage-empty" style="display:none; font-size:11px; color: rgb(26 26 27 / 0.4); padding:8px 0;">No files yet — attach via 📎</div>
             </div>
             <a href="/docs" target="_blank" class="tool" style="margin-top: 12px; display: inline-flex">API Docs →</a>
           </nav>

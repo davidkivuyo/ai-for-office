@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from typing import Optional
 
@@ -13,7 +12,6 @@ from app.db.models import User
 from app.db.repositories import get_conversation
 from app.db.session import get_db
 from app.files.service import handle_file_upload, get_user_file, list_user_files, load_document_from_record
-from app.files.models import DocumentContent
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +163,23 @@ async def list_files(
             "token_estimate": f.token_estimate,
             "size_category": f.size_category,
             "pages": f.pages,
+            "conversation_id": f.conversation_id,
+            "byte_size": f.byte_size,
             "created_at": f.created_at.isoformat(),
         }
         for f in files
     ]
+
+
+@router.delete("/{file_id}", status_code=204)
+async def delete_file(
+    file_id: str,
+    current: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    rec = await get_user_file(db, file_id, current.id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="File not found")
+    await db.delete(rec)
+    await db.commit()
+    return None

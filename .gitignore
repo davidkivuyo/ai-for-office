@@ -55,3 +55,9 @@ nexus.db
 benchmark_results.csv
 alembic/versions/*.py
 !alembic/versions/.gitkeep
+
+# CodeQL Database & Results
+python-db/
+*.bqrs
+*.sarif
+codeql-prompts/

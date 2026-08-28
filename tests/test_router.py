@@ -1,6 +1,5 @@
 import pytest
 from app.ai.router import AIRouter
-from app.ai.models import NodeHealth
 from app.ai.ollama import OllamaError
 
 

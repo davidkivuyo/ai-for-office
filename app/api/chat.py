@@ -5,7 +5,7 @@ import time
 import uuid
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -171,14 +171,15 @@ async def chat(
         # Fall through to non-streaming error — tell client to use /api/chat/stream
         raise HTTPException(status_code=400, detail="Use POST /api/chat/stream for streaming")
 
-    start = time.perf_counter()
     try:
         result = await ai_router.chat(messages=messages, requested_node=requested_node, stream=False, **options)
     except NodeSelectionError as e:
         await db.commit()  # commit user message so history preserved
         raise HTTPException(status_code=400, detail=str(e)) from e
     except OllamaError as e:
-        logger.warning("chat_failed request_id=%s user=%s conv=%s node=%s error=%s", request_id, current.id, conversation.id, requested_node, e)
+        _safe_node = requested_node.replace("\n", "_").replace("\r", "_") if isinstance(requested_node, str) else requested_node
+        _safe_error = str(e).replace("\n", "_").replace("\r", "_")
+        logger.warning("chat_failed request_id=%s user=%s conv=%s node=%s error=%s", request_id, current.id, conversation.id, _safe_node, _safe_error)
         # Do not persist assistant message on failure — return controlled error
         await db.commit()  # commit user message so history preserved
         raise HTTPException(status_code=502, detail="Inference failed") from e
@@ -186,12 +187,13 @@ async def chat(
     latency_ms = result.latency_ms
 
     # Audit-friendly metadata per AGENTS §14
+    _safe_requested_node_info = requested_node.replace("\n", "_").replace("\r", "_") if isinstance(requested_node, str) else requested_node
     logger.info(
         "chat_success request_id=%s user_id=%s conversation_id=%s requested_node=%s actual_node=%s requested_model=%s actual_model=%s latency_ms=%s",
         request_id,
         current.id,
         conversation.id,
-        requested_node,
+        _safe_requested_node_info,
         result.actual_node,
         req_model,
         result.actual_model,
@@ -317,14 +319,18 @@ async def chat_stream(
 
                 yield f"data: {json.dumps({'token': token, 'node_id': node_id, 'model': model}, ensure_ascii=False)}\n\n"
         except NodeSelectionError as e:
-            logger.warning("chat_stream_failed conv=%s node=%s error=%s", conv_id, requested_node, e)
+            _safe_node = requested_node.replace("\n", "_").replace("\r", "_") if isinstance(requested_node, str) else requested_node
+            _safe_error = str(e).replace("\n", "_").replace("\r", "_")
+            logger.warning("chat_stream_failed conv=%s node=%s error=%s", conv_id, _safe_node, _safe_error)
             import json
 
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': 'Node selection failed'})}\n\n"
             yield "data: [DONE]\n\n"
             return
         except OllamaError as e:
-            logger.warning("chat_stream_failed conv=%s node=%s error=%s", conv_id, requested_node, e)
+            _safe_node2 = requested_node.replace("\n", "_").replace("\r", "_") if isinstance(requested_node, str) else requested_node
+            _safe_error2 = str(e).replace("\n", "_").replace("\r", "_")
+            logger.warning("chat_stream_failed conv=%s node=%s error=%s", conv_id, _safe_node2, _safe_error2)
             import json
 
             yield f"data: {json.dumps({'error': 'Inference failed'})}\n\n"

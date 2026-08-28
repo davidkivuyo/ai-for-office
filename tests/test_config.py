@@ -1,4 +1,4 @@
-import os
+
 from app.config import Settings
 
 
@@ -32,9 +32,9 @@ def test_config_respects_env(monkeypatch):
 def test_future_scaling_three_nodes(monkeypatch):
     monkeypatch.setenv("OLLAMA_NODE_3_URL", "http://10.0.0.23:11434")
     monkeypatch.setenv("OLLAMA_NODE_3_MODEL", "qwen3.5:9b")
-    import app.config as cfg
+    from app.config import get_settings as _get_settings
 
-    s = cfg.get_settings()
+    s = _get_settings()
     assert any(n.id == "node3" for n in s.ollama_nodes())
 
 

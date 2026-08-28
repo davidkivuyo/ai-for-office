@@ -83,17 +83,14 @@ async def test_conversation_isolation(authed_client, monkeypatch):
     # New user B should not see it
     import uuid
 
-    app_client = authed_client  # reuse transport but create new user
     # Create second user via same client but new token? Create fresh client
     from httpx import ASGITransport, AsyncClient
 
-    transport = authed_client._transport if hasattr(authed_client, "_transport") else None
     # Simpler: register a second user via same client with overridden token
     # Use the underlying app
     from app.main import create_app
 
     # Create a second authed client via fixture logic — manually
-    base_url = "http://test"
     # Re-use same app_client's app via closure? Use authed_client's underlying app.
     # Instead just try to fetch with no auth after clearing token then register new
     # We'll directly call register with new user, get new token, and try to fetch conv

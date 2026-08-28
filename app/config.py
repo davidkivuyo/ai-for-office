@@ -110,6 +110,7 @@ class Settings(BaseSettings):
                     if isinstance(parsed, list):
                         return [str(x).strip() for x in parsed if str(x).strip()]
                 except Exception:
+                    # Not valid JSON, fall back to comma-separated parsing below
                     pass
             return [s.strip() for s in v.split(",") if s.strip()]
         if isinstance(v, list):

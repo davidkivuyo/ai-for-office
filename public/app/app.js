@@ -150,6 +150,13 @@ const api = {
   async renameConversation(id, title) {
     return apiFetch(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) });
   },
+  async listFiles(conversationId) {
+    const q = conversationId ? `?conversation_id=${conversationId}` : "";
+    return apiFetch(`/api/files${q}`);
+  },
+  async deleteFile(fileId) {
+    return apiFetch(`/api/files/${fileId}`, { method: "DELETE" });
+  },
   async nodesHealth() {
     return apiFetch("/api/nodes/health");
   },
@@ -533,6 +540,7 @@ async function handleDeleteConversation(convId, convTitle) {
       }
     }
     renderConversations();
+    await refreshStorage();
   } catch (e) {
     alert(`Could not delete conversation: ${e.message || e}`);
   }
@@ -769,6 +777,7 @@ function onAuthed(user) {
   // after auth, load data
   refreshConversations();
   refreshNodes();
+  refreshStorage();
   startHealthPoll();
 }
 
@@ -888,6 +897,80 @@ function stopHealthPoll() {
 }
 $("#node-health-btn")?.addEventListener("click", refreshNodes);
 
+/* ---------------- Storage (ChatGPT file manager / Claude artifacts) ---------------- */
+async function refreshStorage() {
+  const listEl = $("#storage-list");
+  const emptyEl = $("#storage-empty");
+  const metaEl = $("#storage-meta");
+  if (!listEl) return;
+  try {
+    const files = await api.listFiles();
+    renderStorage(files);
+    if (metaEl) {
+      const totalTokens = files.reduce((s, f) => s + (f.token_estimate || 0), 0);
+      const totalBytes = files.reduce((s, f) => s + (f.byte_size || 0), 0);
+      const kb = (totalBytes / 1024).toFixed(1);
+      metaEl.textContent = files.length ? `${files.length} file(s) · ${totalTokens} tokens · ${kb} KB` : "No files yet";
+    }
+    if (emptyEl) emptyEl.style.display = files.length ? "none" : "";
+  } catch (e) {
+    console.warn("refreshStorage failed", e);
+    if (metaEl) metaEl.textContent = "Storage unavailable";
+  }
+}
+
+function renderStorage(files) {
+  const listEl = $("#storage-list");
+  const emptyEl = $("#storage-empty");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  if (!files.length) {
+    if (emptyEl) emptyEl.style.display = "";
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = "none";
+  files.forEach((f) => {
+    const li = el("li");
+    const icon = el("div", "storage-file-icon");
+    const ext = (f.filename.split(".").pop() || f.file_type || "?").toUpperCase().slice(0, 4);
+    icon.textContent = ext;
+    const main = el("div", "storage-file-main");
+    const name = el("div", "storage-file-name");
+    name.textContent = f.filename;
+    name.title = f.filename;
+    const meta = el("div", "storage-file-meta");
+    const date = f.created_at ? new Date(f.created_at).toLocaleDateString() : "";
+    const conv = f.conversation_id ? `· conv ${f.conversation_id.slice(0, 6)}` : "· global";
+    meta.textContent = `${f.file_type.toUpperCase()} · ${f.token_estimate} tokens · ${f.size_category} ${conv} · ${date}`;
+    main.appendChild(name);
+    main.appendChild(meta);
+    const delBtn = el("button", "storage-delete");
+    delBtn.type = "button";
+    delBtn.textContent = "×";
+    delBtn.title = `Delete ${f.filename}`;
+    delBtn.setAttribute("aria-label", `Delete ${f.filename}`);
+    delBtn.addEventListener("click", async () => {
+      if (!window.confirm(`Delete "${f.filename}"? This cannot be undone.`)) return;
+      try {
+        await api.deleteFile(f.file_id);
+        // remove from pending if present
+        pendingFiles = pendingFiles.filter(p => p.file_id !== f.file_id);
+        renderPendingFiles();
+        updateFileHint();
+        await refreshStorage();
+      } catch (e) {
+        alert(`Could not delete: ${e.message}`);
+      }
+    });
+    li.appendChild(icon);
+    li.appendChild(main);
+    li.appendChild(delBtn);
+    listEl.appendChild(li);
+  });
+}
+
+$("#storage-refresh")?.addEventListener("click", refreshStorage);
+
 /* ---------------- Compose ---------------- */
 /* ---------------- File attachments (Phase 2A) ---------------- */
 function renderPendingFiles() {
@@ -960,10 +1043,11 @@ async function handleFilesSelected(fileList) {
       if (hint) hint.textContent = "";
     }
   }
+  await refreshStorage();
   // clear input
   const inp = $("#file-input");
   if (inp) inp.value = "";
-  if (!pendingFiles.length && hint) { hint.textContent = ""; hint.style.display = "none"; }
+  if (!pendingFiles.length && hint) { hint.textContent = ""; hint.style.display = "none"; } else if (hint && pendingFiles.length) { updateFileHint(); }
 }
 
 async function submit(rawText) {
