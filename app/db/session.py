@@ -4,11 +4,11 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.db.base import Base
+from app.db.engine import create_db_engine, create_engine_for_settings
 
 # Process-scoped engine for callers without an explicit FastAPI app.
 # Reused across calls to avoid creating unmanaged pooled engines repeatedly;
@@ -23,12 +23,15 @@ def _create_engine_for_app(app) -> AsyncEngine:
         settings = app.state.settings  # type: ignore[attr-defined]
     except AttributeError:
         settings = get_settings()
-    engine: AsyncEngine = create_async_engine(
+    # Main app engine must remain read-write for user/conversation writes.
+    # Read-only enforcement is for AI tool queries only (via validation + dedicated read-only check),
+    # not for the primary application DB. Use read_only=False here per AGENTS §15.
+    return create_db_engine(
         settings.database_url,
-        echo=False,
-        pool_pre_ping=True,
+        read_only=False,
+        query_timeout_seconds=settings.effective_db_query_timeout,
+        use_null_pool=False,
     )
-    return engine
 
 
 def _get_process_engine() -> AsyncEngine:
@@ -42,11 +45,13 @@ def _get_process_engine() -> AsyncEngine:
     if _process_engine is not None:
         return _process_engine
     settings = get_settings()
-    _process_engine = create_async_engine(
+    # Process engine for general use remains read-write; tool-specific read-only
+    # is enforced via query validation, not engine pragma.
+    _process_engine = create_db_engine(
         settings.database_url,
-        echo=False,
-        pool_pre_ping=True,
-        poolclass=NullPool,
+        read_only=False,
+        query_timeout_seconds=settings.effective_db_query_timeout,
+        use_null_pool=True,
     )
     return _process_engine
 
@@ -68,11 +73,11 @@ async def ephemeral_engine() -> AsyncIterator[AsyncEngine]:
     Uses NullPool to avoid pooled connections.
     """
     settings = get_settings()
-    engine = create_async_engine(
+    engine = create_db_engine(
         settings.database_url,
-        echo=False,
-        pool_pre_ping=True,
-        poolclass=NullPool,
+        read_only=False,
+        query_timeout_seconds=settings.effective_db_query_timeout,
+        use_null_pool=True,
     )
     try:
         yield engine

@@ -32,6 +32,15 @@ class Settings(BaseSettings):
 
     database_url: str = Field(default="sqlite+aiosqlite:///./nexus.db", alias="DATABASE_URL")
     database_url_sync: str = Field(default="sqlite:///./nexus.db", alias="DATABASE_URL_SYNC")
+    # Phase 2B — database foundation per AGENTS §15/§18/§22
+    database_read_only: bool = Field(default=True, alias="DATABASE_READ_ONLY")
+    db_max_rows: int = Field(default=200, alias="DB_MAX_ROWS")
+    db_query_timeout_seconds: int = Field(default=10, alias="DB_QUERY_TIMEOUT_SECONDS")
+    db_max_cell_length: int = Field(default=4000, alias="DB_MAX_CELL_LENGTH")
+    # Backward-compatible aliases for §18 naming (MAX_ROWS / QUERY_TIMEOUT_SECONDS)
+    max_rows: int | None = Field(default=None, alias="MAX_ROWS")
+    query_timeout_seconds: int | None = Field(default=None, alias="QUERY_TIMEOUT_SECONDS")
+    ai_max_tool_steps: int = Field(default=3, alias="AI_MAX_TOOL_STEPS")
 
     secret_key: str = Field(alias="SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
@@ -93,6 +102,13 @@ class Settings(BaseSettings):
     def _validate_default_node(cls, v: str) -> str:
         return v.lower()
 
+    @field_validator("db_max_rows", "db_query_timeout_seconds", "db_max_cell_length", "ai_max_tool_steps")
+    @classmethod
+    def _validate_positive_int(cls, v: int) -> int:  # type: ignore[no-untyped-def]
+        if v <= 0:
+            raise ValueError("must be positive")
+        return v
+
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
     def _parse_cors_origins(cls, v):  # type: ignore[no-untyped-def]
@@ -116,6 +132,21 @@ class Settings(BaseSettings):
         if isinstance(v, list):
             return [str(x).strip() for x in v if str(x).strip()]
         return v
+
+    # --- Phase 2B helpers ----------------------------------------------------
+    @property
+    def effective_db_max_rows(self) -> int:
+        """Return effective max rows respecting MAX_ROWS alias per AGENTS §18."""
+        if self.max_rows is not None and self.max_rows > 0:
+            return self.max_rows
+        return self.db_max_rows
+
+    @property
+    def effective_db_query_timeout(self) -> int:
+        """Return effective query timeout respecting QUERY_TIMEOUT_SECONDS alias."""
+        if self.query_timeout_seconds is not None and self.query_timeout_seconds > 0:
+            return self.query_timeout_seconds
+        return self.db_query_timeout_seconds
 
     def ollama_nodes(self) -> list[OllamaNodeConfig]:
         """Collect all OLLAMA_NODE_* configs from environment.

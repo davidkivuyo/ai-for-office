@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.health import HealthManager, get_health_manager_dep
 from app.auth.permissions import get_current_user_optional
 from app.config import Settings, get_settings_dep
+from app.db.health import check_database_health
 from app.db.models import User
 from app.db.session import get_db
 
@@ -20,8 +21,11 @@ router = APIRouter(prefix="/api", tags=["health"])
 
 
 @router.get("/health")
-async def health(db: AsyncSession = Depends(get_db), settings: Settings = Depends(get_settings_dep)) -> dict[str, str]:
-    # DB check
+async def health(
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings_dep),
+) -> dict[str, Any]:
+    # DB liveness via session — simplest path; health service is available at /api/health/db for bounded probe
     db_status = "ok"
     try:
         await db.execute(text("SELECT 1"))
@@ -30,6 +34,25 @@ async def health(db: AsyncSession = Depends(get_db), settings: Settings = Depend
         db_status = "error"
 
     return {"status": "ok" if db_status == "ok" else "degraded", "db": db_status, "env": settings.app_env}
+
+
+@router.get("/health/db")
+async def db_health_detail(
+    settings: Settings = Depends(get_settings_dep),
+) -> dict[str, Any]:
+    """Detailed DB health via Phase 2B health service (bounded, never leaks raw error)."""
+    try:
+        from app.db.engine import create_engine_for_settings
+
+        eng = create_engine_for_settings(settings, use_null_pool=True)
+        try:
+            st = await check_database_health(eng, timeout_seconds=settings.effective_db_query_timeout)
+        finally:
+            await eng.dispose()
+        return {"db": st.status, "latency_ms": st.latency_ms, "error": st.error}
+    except Exception:
+        logger.exception("db_health_detail_failed")
+        return {"db": "error", "error": "The database request could not be completed right now."}
 
 
 @router.get("/nodes/health")
